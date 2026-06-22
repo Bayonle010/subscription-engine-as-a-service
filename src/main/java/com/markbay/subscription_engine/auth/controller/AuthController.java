@@ -1,8 +1,6 @@
 package com.markbay.subscription_engine.auth.controller;
 
-import com.markbay.subscription_engine.auth.dto.AuthResponse;
-import com.markbay.subscription_engine.auth.dto.LoginRequest;
-import com.markbay.subscription_engine.auth.dto.RegisterMerchantRequest;
+import com.markbay.subscription_engine.auth.dto.*;
 import com.markbay.subscription_engine.auth.service.AuthService;
 import com.markbay.subscription_engine.common.response.ApiResponse;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
@@ -51,4 +49,40 @@ public class AuthController {
                 )
         );
     }
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<ApiResponse<AuthResponse>> refreshToken(
+            @Valid @RequestBody RefreshTokenRequest request
+    ) {
+        AuthResponse response = authService.refreshToken(request);
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        0,
+                        "Access token refreshed successfully",
+                        null,
+                        response,
+                        null
+                )
+        );
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Object>> logout(
+            @Valid @RequestBody LogoutRequest request
+    ) {
+        authService.logout(request.refreshToken());
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        0,
+                        "Logout successful",
+                        null,
+                        null,
+                        null
+                )
+        );
+    }
+
+
 }
