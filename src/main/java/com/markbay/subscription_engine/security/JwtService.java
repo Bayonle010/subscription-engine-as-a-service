@@ -15,7 +15,9 @@ import java.util.UUID;
 public class JwtService {
 
     private static final String ISSUER = "subscription-engine";
-    private static final long ACCESS_TOKEN_DURATION_IN_SECONDS = 60 * 60L; // 1 hour
+
+    private static final long ACCESS_TOKEN_DURATION_IN_SECONDS = 10 * 60L; // 10 minutes
+    private static final long REFRESH_TOKEN_DURATION_IN_SECONDS = 60 * 60L; // 1 hour
 
     private final JwtEncoder jwtEncoder;
     private final JwtDecoder jwtDecoder;
@@ -35,6 +37,29 @@ public class JwtService {
                 .claim("role", merchantUser.getRole().name())
                 .claim("roles", roles)
                 .claim("tokenType", "ACCESS")
+                .claim("sessionVersion", merchantUser.getSessionVersion())
+                .build();
+
+        return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+    }
+
+    public String generateRefreshToken(MerchantUser merchantUser) {
+        Instant now = Instant.now();
+        String tokenId = UUID.randomUUID().toString();
+
+        List<String> roles = List.of("ROLE_" + merchantUser.getRole().name());
+
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer(ISSUER)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(REFRESH_TOKEN_DURATION_IN_SECONDS))
+                .subject(merchantUser.getEmail())
+                .claim("userId", merchantUser.getId().toString())
+                .claim("tenantId", merchantUser.getTenant().getId().toString())
+                .claim("role", merchantUser.getRole().name())
+                .claim("roles", roles)
+                .claim("tokenType", "REFRESH")
+                .claim("tokenId", tokenId)
                 .claim("sessionVersion", merchantUser.getSessionVersion())
                 .build();
 
