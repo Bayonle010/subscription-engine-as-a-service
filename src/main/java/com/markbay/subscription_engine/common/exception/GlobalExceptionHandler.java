@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -310,5 +311,18 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Object>> handleNoResourceFoundException(
+            NoResourceFoundException ex
+    ) {
+        ApiResponse<Object> errorResponse = ResponseUtil.error(
+                HttpStatus.NOT_FOUND.value(),
+                "Endpoint not found",
+                "No resource found for this request path"
+        );
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
     }
 }
