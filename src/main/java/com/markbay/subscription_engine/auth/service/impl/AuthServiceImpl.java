@@ -1,11 +1,11 @@
-package com.markbay.subscription_engine.auth.service;
+package com.markbay.subscription_engine.auth.service.impl;
 
-import com.markbay.subscription_engine.auth.dto.AuthResponse;
-import com.markbay.subscription_engine.auth.dto.LoginRequest;
-import com.markbay.subscription_engine.auth.dto.MerchantUserDto;
-import com.markbay.subscription_engine.auth.dto.RefreshTokenRequest;
-import com.markbay.subscription_engine.auth.dto.RegisterMerchantRequest;
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
+import com.markbay.subscription_engine.apiKey.service.ApiKeyService;
+import com.markbay.subscription_engine.auth.dto.*;
+import com.markbay.subscription_engine.auth.service.AuthService;
 import com.markbay.subscription_engine.auth.token.service.MerchantTokenService;
+import com.markbay.subscription_engine.common.exception.BadRequestException;
 import com.markbay.subscription_engine.common.exception.ConflictException;
 import com.markbay.subscription_engine.common.exception.InvalidCredentialException;
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
@@ -29,10 +29,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @RequiredArgsConstructor
 @Service
-public class AuthServiceImpl implements  AuthService {
+public class AuthServiceImpl implements AuthService {
 
     private final TenantRepository tenantRepository;
     private final MerchantUserRepository merchantUserRepository;
@@ -41,6 +42,7 @@ public class AuthServiceImpl implements  AuthService {
     private final JwtService jwtService;
     private final MerchantTokenService tokenService;
     private final AuthenticatedMerchantProvider merchantProvider;
+    private final ApiKeyService apiKeyService;
 
     @Override
     @Transactional
@@ -201,5 +203,54 @@ public class AuthServiceImpl implements  AuthService {
                 .orElseThrow(() -> new ResourceNotFoundException("Merchant user not found"));
 
         return MerchantUserDto.from(merchantUser);
+    }
+
+    @Override
+    @Transactional
+    public ApiAccessTokenResponse generateApiAccessToken(
+            String accountIdHeader,
+            String clientId,
+            String secretKey
+    ) {
+        if (!hasText(accountIdHeader)) {
+            throw new BadRequestException("accountId header is required");
+        }
+
+        if (!hasText(clientId)) {
+            throw new BadRequestException("clientId header is required");
+        }
+
+        if (!hasText(secretKey)) {
+            throw new BadRequestException("secretKey header is required");
+        }
+
+        UUID accountId;
+
+        try {
+            accountId = UUID.fromString(accountIdHeader.trim());
+        } catch (IllegalArgumentException exception) {
+            throw new BadRequestException("accountId must be a valid UUID");
+        }
+
+        ApiKey apiKey = apiKeyService.authenticateApiKey(
+                accountId,
+                clientId.trim(),
+                secretKey.trim()
+        );
+
+        String accessToken = jwtService.generateApiAccessToken(apiKey);
+
+        return ApiAccessTokenResponse.builder()
+                .accessToken(accessToken)
+                .tokenType("Bearer")
+                .expiresIn(jwtService.getApiAccessTokenExpiresInSeconds())
+                .accountId(apiKey.getTenant().getId())
+                .clientId(apiKey.getClientId())
+                .mode(apiKey.getMode().name())
+                .build();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isBlank();
     }
 }

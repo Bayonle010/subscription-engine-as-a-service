@@ -2,12 +2,13 @@ package com.markbay.subscription_engine.apiKey.service.impl;
 
 import com.markbay.subscription_engine.apiKey.dto.ApiKeyResponse;
 import com.markbay.subscription_engine.apiKey.dto.CreateApiKeyRequest;
-import com.markbay.subscription_engine.apiKey.entitty.ApiKey;
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
 import com.markbay.subscription_engine.apiKey.enums.ApiKeyMode;
 import com.markbay.subscription_engine.apiKey.enums.ApiKeyStatus;
 import com.markbay.subscription_engine.apiKey.repository.ApiKeyRepository;
 import com.markbay.subscription_engine.apiKey.service.ApiKeyService;
 import com.markbay.subscription_engine.apiKey.util.ApiCredentialGenerator;
+import com.markbay.subscription_engine.common.exception.InvalidCredentialException;
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
 import com.markbay.subscription_engine.merchant.entity.MerchantUser;
 import com.markbay.subscription_engine.merchant.repository.MerchantUserRepository;
@@ -106,12 +107,12 @@ public class ApiKeyServiceImpl implements ApiKeyService {
     public ApiKey authenticateApiKey(UUID accountId, String clientId, String secretKey) {
         ApiKey apiKey = apiKeyRepository
                 .findByTenantIdAndClientIdAndStatus(accountId, clientId, ApiKeyStatus.ACTIVE)
-                .orElseThrow(() -> new BadCredentialsException("Invalid API credentials"));
+                .orElseThrow(() -> new InvalidCredentialException("Invalid API credentials"));
 
         boolean secretMatches = passwordEncoder.matches(secretKey, apiKey.getSecretHash());
 
         if (!secretMatches) {
-            throw new BadCredentialsException("Invalid API credentials");
+            throw new InvalidCredentialException("Invalid API credentials");
         }
 
         apiKey.setLastUsedAt(Instant.now());

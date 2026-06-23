@@ -1,10 +1,9 @@
 package com.markbay.subscription_engine.security;
 
 
-import com.markbay.subscription_engine.apiKey.entitty.ApiKey;
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
 import com.markbay.subscription_engine.apiKey.service.ApiKeyService;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
-import com.sun.jdi.connect.IllegalConnectorArgumentsException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

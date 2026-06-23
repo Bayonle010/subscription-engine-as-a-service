@@ -8,5 +8,10 @@ public interface AuthService {
     AuthResponse refreshToken(RefreshTokenRequest refreshTokenRequest);
     void logout(String refreshToken);
     MerchantUserDto getAuthenticatedUser();
+    ApiAccessTokenResponse generateApiAccessToken(
+            String accountIdHeader,
+            String clientId,
+            String secretKey
+    );
 
 }

@@ -101,5 +101,25 @@ public class AuthController {
         );
     }
 
+    @PostMapping("/token")
+    public ResponseEntity<ApiResponse<ApiAccessTokenResponse>> generateApiAccessToken(
+            @RequestHeader(value = "accountId", required = false) String accountId,
+            @RequestHeader(value = "clientId", required = false) String clientId,
+            @RequestHeader(value = "secretKey", required = false) String secretKey
+    ) {
+        ApiAccessTokenResponse response = authService.generateApiAccessToken(
+                accountId,
+                clientId,
+                secretKey
+        );
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        "API access token generated successfully",
+                        response
+                )
+        );
+    }
+
 
 }

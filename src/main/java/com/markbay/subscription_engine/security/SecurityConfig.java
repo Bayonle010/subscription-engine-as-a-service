@@ -42,6 +42,7 @@ public class SecurityConfig {
             "/api/v1/auth/login",
             "/api/v1/auth/refresh-token",
             "/api/v1/auth/logout",
+            "/api/v1/auth/token",
 
             "/swagger-ui/**",
             "/v3/api-docs/**",
@@ -52,7 +53,6 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            ApiKeyAuthenticationFilter apiKeyAuthenticationFilter,
             JwtFilter jwtFilter
     ) throws Exception {
         http
@@ -68,8 +68,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(customAuthEntryPoint)
                         .accessDeniedHandler(customAccessDeniedHandler)
                 )
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(apiKeyAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

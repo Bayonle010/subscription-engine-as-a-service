@@ -1,7 +1,7 @@
 package com.markbay.subscription_engine.apiKey.repository;
 
 
-import com.markbay.subscription_engine.apiKey.entitty.ApiKey;
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
 import com.markbay.subscription_engine.apiKey.enums.ApiKeyStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 

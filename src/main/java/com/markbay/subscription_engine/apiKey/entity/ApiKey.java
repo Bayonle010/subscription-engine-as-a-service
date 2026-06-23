@@ -1,4 +1,4 @@
-package com.markbay.subscription_engine.apiKey.entitty;
+package com.markbay.subscription_engine.apiKey.entity;
 
 import com.markbay.subscription_engine.apiKey.enums.ApiKeyMode;
 import com.markbay.subscription_engine.apiKey.enums.ApiKeyStatus;

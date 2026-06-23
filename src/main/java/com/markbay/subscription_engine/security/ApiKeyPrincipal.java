@@ -1,6 +1,6 @@
 package com.markbay.subscription_engine.security;
 
-import com.markbay.subscription_engine.apiKey.entitty.ApiKey;
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
 import lombok.Getter;
 
 import java.util.UUID;
