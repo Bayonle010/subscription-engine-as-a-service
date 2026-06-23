@@ -1,5 +1,6 @@
 package com.markbay.subscription_engine.security;
 
+import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
 import com.markbay.subscription_engine.merchant.entity.MerchantUser;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -56,7 +57,7 @@ public class JwtFilter extends OncePerRequestFilter {
 
         if (email != null && getContext().getAuthentication() == null) {
             MerchantUser merchantUser = merchantUserRepository.findByEmailIgnoreCase(email)
-                    .orElseThrow(() -> new RuntimeException("Merchant user not found"));
+                    .orElseThrow(() -> new ResourceNotFoundException("Merchant user not found"));
 
             Long tokenSessionVersion = jwt.getClaim("sessionVersion");
 
@@ -93,7 +94,10 @@ public class JwtFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
 
-        return uri.startsWith("/api/v1/auth/")
+        return uri.equals("/api/v1/auth/register")
+                || uri.equals("/api/v1/auth/login")
+                || uri.equals("/api/v1/auth/refresh-token")
+                || uri.equals("/api/v1/auth/logout")
                 || uri.startsWith("/swagger-ui/")
                 || uri.startsWith("/v3/api-docs")
                 || uri.equals("/swagger-ui.html")
