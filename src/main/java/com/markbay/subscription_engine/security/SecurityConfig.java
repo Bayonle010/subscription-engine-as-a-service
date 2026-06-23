@@ -48,6 +48,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
+            ApiKeyAuthenticationFilter apiKeyAuthenticationFilter,
             JwtFilter jwtFilter
     ) throws Exception {
         http
@@ -63,7 +64,8 @@ public class SecurityConfig {
                         .authenticationEntryPoint(customAuthEntryPoint)
                         .accessDeniedHandler(customAccessDeniedHandler)
                 )
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(apiKeyAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
