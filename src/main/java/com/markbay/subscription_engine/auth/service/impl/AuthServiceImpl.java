@@ -16,7 +16,7 @@ import com.markbay.subscription_engine.merchant.enums.MerchantUserStatus;
 import com.markbay.subscription_engine.security.JwtService;
 import com.markbay.subscription_engine.tenant.entity.Tenant;
 import com.markbay.subscription_engine.tenant.repository.TenantRepository;
-import com.markbay.subscription_engine.tenant.TenantStatus;
+import com.markbay.subscription_engine.tenant.enums.TenantStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
