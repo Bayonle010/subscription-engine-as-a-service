@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RequiredArgsConstructor
@@ -79,6 +80,22 @@ public class AuthController {
                         "Logout successful",
                         null,
                         null,
+                        null
+                )
+        );
+    }
+
+    @PreAuthorize("hasAnyRole('OWNER', 'ADMIN', 'DEVELOPER', 'SUPPORT')")
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<MerchantUserDto>> me() {
+        MerchantUserDto response = authService.getAuthenticatedUser();
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        0,
+                        "Authenticated merchant user retrieved successfully",
+                        null,
+                        response,
                         null
                 )
         );

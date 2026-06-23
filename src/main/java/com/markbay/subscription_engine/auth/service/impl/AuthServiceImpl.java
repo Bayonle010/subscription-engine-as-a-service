@@ -13,7 +13,9 @@ import com.markbay.subscription_engine.merchant.enums.MerchantRole;
 import com.markbay.subscription_engine.merchant.entity.MerchantUser;
 import com.markbay.subscription_engine.merchant.repository.MerchantUserRepository;
 import com.markbay.subscription_engine.merchant.enums.MerchantUserStatus;
+import com.markbay.subscription_engine.security.AuthenticatedMerchantProvider;
 import com.markbay.subscription_engine.security.JwtService;
+import com.markbay.subscription_engine.security.MerchantPrincipal;
 import com.markbay.subscription_engine.tenant.entity.Tenant;
 import com.markbay.subscription_engine.tenant.repository.TenantRepository;
 import com.markbay.subscription_engine.tenant.enums.TenantStatus;
@@ -38,6 +40,7 @@ public class AuthServiceImpl implements  AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final MerchantTokenService tokenService;
+    private final AuthenticatedMerchantProvider merchantProvider;
 
     @Override
     @Transactional
@@ -188,5 +191,15 @@ public class AuthServiceImpl implements  AuthService {
         merchantUserRepository.save(merchantUser);
 
         tokenService.revokeAllUserRefreshTokens(merchantUser);
+    }
+
+    @Override
+    public MerchantUserDto getAuthenticatedUser() {
+        MerchantPrincipal currentMerchant = merchantProvider.getCurrentMerchant();
+
+        MerchantUser merchantUser = merchantUserRepository.findById(currentMerchant.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Merchant user not found"));
+
+        return MerchantUserDto.from(merchantUser);
     }
 }
