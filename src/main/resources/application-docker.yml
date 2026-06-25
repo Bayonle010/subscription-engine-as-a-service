@@ -1,5 +1,5 @@
 server:
-  port: 8082
+  port: 8083
 
 spring:
   application:
@@ -10,9 +10,8 @@ spring:
     compose:
       enabled: false
 
-
   config:
-    import: optional:file:.env.local[.properties]
+    import: optional:file:.env[.properties]
 
 
 

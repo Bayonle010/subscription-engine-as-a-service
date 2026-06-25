@@ -1,6 +1,6 @@
 package com.markbay.subscription_engine.tenant.entity;
 
-import com.markbay.subscription_engine.tenant.TenantStatus;
+import com.markbay.subscription_engine.tenant.enums.TenantStatus;
 import jakarta.persistence.*;
 import lombok.*;
 

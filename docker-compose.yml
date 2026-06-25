@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: subscription-engine-app
+    ports:
+      - "8083:8083"
+    env_file:
+      - /etc/subscription-engine/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - subscription-engine-network
+
+  db:
+    image: postgres:17
+    container_name: subscription-engine-postgres-db
+    restart: unless-stopped
+    env_file:
+      - /etc/subscription-engine/.env
+    ports:
+      - "5433:5432"
+    volumes:
+      - subscription_engine_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - subscription-engine-network
+
+networks:
+  subscription-engine-network:
+    driver: bridge
+
+volumes:
+  subscription_engine_db_data:

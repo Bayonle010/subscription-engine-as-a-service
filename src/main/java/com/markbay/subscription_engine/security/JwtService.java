@@ -1,5 +1,6 @@
 package com.markbay.subscription_engine.security;
 
+import com.markbay.subscription_engine.apiKey.entity.ApiKey;
 import com.markbay.subscription_engine.merchant.entity.MerchantUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
@@ -15,7 +16,10 @@ import java.util.UUID;
 public class JwtService {
 
     private static final String ISSUER = "subscription-engine";
-    private static final long ACCESS_TOKEN_DURATION_IN_SECONDS = 60 * 60L; // 1 hour
+
+    private static final long ACCESS_TOKEN_DURATION_IN_SECONDS = 10 * 60L;
+    private static final long REFRESH_TOKEN_DURATION_IN_SECONDS = 60 * 60L;
+    private static final long API_ACCESS_TOKEN_DURATION_IN_SECONDS = 10 * 60L;
 
     private final JwtEncoder jwtEncoder;
     private final JwtDecoder jwtDecoder;
@@ -39,6 +43,55 @@ public class JwtService {
                 .build();
 
         return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+    }
+
+    public String generateRefreshToken(MerchantUser merchantUser) {
+        Instant now = Instant.now();
+        String tokenId = UUID.randomUUID().toString();
+
+        List<String> roles = List.of("ROLE_" + merchantUser.getRole().name());
+
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer(ISSUER)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(REFRESH_TOKEN_DURATION_IN_SECONDS))
+                .subject(merchantUser.getEmail())
+                .claim("userId", merchantUser.getId().toString())
+                .claim("tenantId", merchantUser.getTenant().getId().toString())
+                .claim("role", merchantUser.getRole().name())
+                .claim("roles", roles)
+                .claim("tokenType", "REFRESH")
+                .claim("tokenId", tokenId)
+                .claim("sessionVersion", merchantUser.getSessionVersion())
+                .build();
+
+        return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+    }
+
+    public String generateApiAccessToken(ApiKey apiKey) {
+        Instant now = Instant.now();
+
+        List<String> roles = List.of("ROLE_API_CLIENT");
+
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer(ISSUER)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(API_ACCESS_TOKEN_DURATION_IN_SECONDS))
+                .subject(apiKey.getClientId())
+                .claim("apiKeyId", apiKey.getId().toString())
+                .claim("tenantId", apiKey.getTenant().getId().toString())
+                .claim("accountId", apiKey.getTenant().getId().toString())
+                .claim("clientId", apiKey.getClientId())
+                .claim("mode", apiKey.getMode().name())
+                .claim("roles", roles)
+                .claim("tokenType", "API_ACCESS")
+                .build();
+
+        return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+    }
+
+    public long getApiAccessTokenExpiresInSeconds() {
+        return API_ACCESS_TOKEN_DURATION_IN_SECONDS;
     }
 
     public Jwt decodeJwt(String token) {
