@@ -30,3 +30,9 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+
+app:
+  cors:
+    allowed-origins: "*"
+    allow-credentials: false
