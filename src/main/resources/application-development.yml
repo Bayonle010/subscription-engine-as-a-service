@@ -32,3 +32,15 @@ app:
   cors:
     allowed-origins: "*"
     allow-credentials: false
+
+
+payment:
+  nomba:
+    base-url: ${NOMBA_BASE_URL:https://sandbox.api.nomba.com}
+    account-id: ${NOMBA_PARENT_ACCOUNT_ID}
+    client-id: ${NOMBA_CLIENT_ID}
+    client-secret: ${NOMBA_CLIENT_SECRET}
+
+http:
+  connect-timeout-ms: 5000
+  response-timeout-ms: 15000
