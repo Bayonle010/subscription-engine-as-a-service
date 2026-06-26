@@ -42,17 +42,13 @@ public class TenantFinancialAccountServiceImpl
 
     @Override
     @Transactional
-    public TenantFinancialSetupResponse setupFinancialAccount(
-            SetupTenantFinancialAccountRequest request
-    ) {
-        UUID tenantId = authenticatedTenantProvider.getCurrentTenantId();
-
+    public TenantFinancialSetupResponse setupFinancialAccountForTenant(UUID tenantId) {
         Tenant tenant = tenantRepository.findById(tenantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Tenant not found"));
 
         TenantFinancialAccount financialAccount =
                 financialAccountRepository.findByTenant_Id(tenantId)
-                        .orElseGet(() -> buildPendingFinancialAccount(tenant, request));
+                        .orElseGet(() -> buildPendingFinancialAccount(tenant));
 
         if (financialAccount.getStatus() == FinancialAccountStatus.ACTIVE) {
             List<LedgerAccountResponse> ledgerAccounts =
@@ -68,10 +64,8 @@ public class TenantFinancialAccountServiceImpl
             throw new BadRequestException("Tenant financial account is disabled");
         }
 
-        String accountName = resolveAccountName(request, tenant, financialAccount);
-        String accountRef = resolveAccountRef(request, tenant, financialAccount);
-
-        validateAccountRefAvailability(financialAccount, accountRef);
+        String accountName = resolveAccountName(tenant, financialAccount);
+        String accountRef = resolveAccountRef(tenant, financialAccount);
 
         financialAccount.setProvider(FinancialProvider.NOMBA);
         financialAccount.setAccountName(accountName);
@@ -127,6 +121,14 @@ public class TenantFinancialAccountServiceImpl
                     ledgerAccounts
             );
         }
+    }
+
+    @Override
+    @Transactional
+    public TenantFinancialSetupResponse retryFinancialSetupForCurrentTenant() {
+        UUID tenantId = authenticatedTenantProvider.getCurrentTenantId();
+
+        return setupFinancialAccountForTenant(tenantId);
     }
 
     @Override
@@ -198,33 +200,36 @@ public class TenantFinancialAccountServiceImpl
         return financialAccount;
     }
 
-    private TenantFinancialAccount buildPendingFinancialAccount(
-            Tenant tenant,
-            SetupTenantFinancialAccountRequest request
-    ) {
+    private TenantFinancialAccount buildPendingFinancialAccount(Tenant tenant) {
         return TenantFinancialAccount.builder()
                 .tenant(tenant)
                 .provider(FinancialProvider.NOMBA)
-                .accountName(resolveAccountName(request, tenant, null))
-                .accountRef(resolveAccountRef(request, tenant, null))
+                .accountName(resolveAccountName(tenant, null))
+                .accountRef(resolveAccountRef(tenant, null))
                 .status(FinancialAccountStatus.PENDING)
                 .build();
     }
 
     private String resolveAccountName(
-            SetupTenantFinancialAccountRequest request,
             Tenant tenant,
             TenantFinancialAccount existingAccount
     ) {
-        if (request != null && hasText(request.accountName())) {
-            return request.accountName().trim();
-        }
-
         if (existingAccount != null && hasText(existingAccount.getAccountName())) {
             return existingAccount.getAccountName();
         }
 
         return tenant.getBusinessName();
+    }
+
+    private String resolveAccountRef(
+            Tenant tenant,
+            TenantFinancialAccount existingAccount
+    ) {
+        if (existingAccount != null && hasText(existingAccount.getAccountRef())) {
+            return existingAccount.getAccountRef();
+        }
+
+        return "tenant_" + tenant.getId().toString().replace("-", "");
     }
 
     private String resolveAccountRef(
@@ -242,20 +247,7 @@ public class TenantFinancialAccountServiceImpl
 
         return "tenant_" + tenant.getId().toString().replace("-", "");
     }
-
-    private void validateAccountRefAvailability(
-            TenantFinancialAccount financialAccount,
-            String accountRef
-    ) {
-        boolean accountRefChanged =
-                financialAccount.getAccountRef() == null ||
-                        !financialAccount.getAccountRef().equals(accountRef);
-
-        if (accountRefChanged &&
-                financialAccountRepository.existsByAccountRef(accountRef)) {
-            throw new ConflictException("Financial account reference already exists");
-        }
-    }
+    
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isBlank();

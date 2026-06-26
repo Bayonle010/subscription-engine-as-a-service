@@ -22,17 +22,15 @@ public class TenantFinancialAccountController {
     private final TenantFinancialAccountService financialAccountService;
 
     @PreAuthorize("hasAnyRole('OWNER', 'ADMIN')")
-    @PostMapping("/setup")
-    public ResponseEntity<ApiResponse<TenantFinancialSetupResponse>> setupFinancialAccount(
-            @Valid @RequestBody(required = false) SetupTenantFinancialAccountRequest request
-    ) {
+    @PostMapping("/retry-setup")
+    public ResponseEntity<ApiResponse<TenantFinancialSetupResponse>> retryFinancialSetup() {
         TenantFinancialSetupResponse response =
-                financialAccountService.setupFinancialAccount(request);
+                financialAccountService.retryFinancialSetupForCurrentTenant();
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(
+        return ResponseEntity.ok(
                 ResponseUtil.success(
                         0,
-                        "Tenant financial setup processed successfully",
+                        "Tenant financial setup retry processed successfully",
                         null,
                         response,
                         null

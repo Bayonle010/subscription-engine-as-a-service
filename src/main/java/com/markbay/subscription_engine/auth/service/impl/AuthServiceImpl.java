@@ -17,9 +17,11 @@ import com.markbay.subscription_engine.security.AuthenticatedMerchantProvider;
 import com.markbay.subscription_engine.security.JwtService;
 import com.markbay.subscription_engine.security.MerchantPrincipal;
 import com.markbay.subscription_engine.tenant.entity.Tenant;
+import com.markbay.subscription_engine.tenant.event.TenantRegisteredEvent;
 import com.markbay.subscription_engine.tenant.repository.TenantRepository;
 import com.markbay.subscription_engine.tenant.enums.TenantStatus;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -43,6 +45,7 @@ public class AuthServiceImpl implements AuthService {
     private final MerchantTokenService tokenService;
     private final AuthenticatedMerchantProvider merchantProvider;
     private final ApiKeyService apiKeyService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -81,6 +84,8 @@ public class AuthServiceImpl implements AuthService {
                 .build();
 
         MerchantUser savedUser = merchantUserRepository.save(merchantUser);
+
+        eventPublisher.publishEvent(new TenantRegisteredEvent(savedTenant.getId()));
 
         String accessToken = jwtService.generateAccessToken(savedUser);
         String refreshToken = jwtService.generateRefreshToken(savedUser);

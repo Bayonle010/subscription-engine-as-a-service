@@ -10,9 +10,10 @@ import java.util.UUID;
 
 public interface TenantFinancialAccountService {
 
-    TenantFinancialSetupResponse setupFinancialAccount(
-            SetupTenantFinancialAccountRequest request
-    );
+    TenantFinancialSetupResponse setupFinancialAccountForTenant(UUID tenantId);
+
+
+    TenantFinancialSetupResponse retryFinancialSetupForCurrentTenant();
 
     TenantFinancialAccountResponse getCurrentTenantFinancialAccount();
 
