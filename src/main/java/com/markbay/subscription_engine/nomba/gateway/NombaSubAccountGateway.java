@@ -53,7 +53,7 @@ public class NombaSubAccountGateway {
                     new NombaCreateSubAccountRequest(accountName, accountRef);
 
             NombaApiResponse<JsonNode> response = nombaRestClient.post()
-                    .uri("/accounts/sub-accounts")
+                    .uri("/accounts")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                     .body(request)
                     .retrieve()
@@ -138,7 +138,7 @@ public class NombaSubAccountGateway {
             );
 
             NombaApiResponse<JsonNode> response = nombaRestClient.get()
-                    .uri("/accounts/sub-accounts/{id}/balance", providerAccountId)
+                    .uri("/accounts/{id}/balance", providerAccountId)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
