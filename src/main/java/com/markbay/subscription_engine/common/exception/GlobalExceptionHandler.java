@@ -2,6 +2,7 @@ package com.markbay.subscription_engine.common.exception;
 
 import com.markbay.subscription_engine.common.response.ApiResponse;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
+import com.markbay.subscription_engine.nomba.exception.NombaApiException;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
@@ -324,5 +325,18 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(NombaApiException.class)
+    public ResponseEntity<ApiResponse<Object>> handleNombaApiException(
+            NombaApiException ex
+    ) {
+        ApiResponse<Object> errorResponse = ResponseUtil.error(
+                HttpStatus.BAD_GATEWAY.value(),
+                "Nomba service error",
+                ex.getMessage()
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
     }
 }

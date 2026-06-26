@@ -30,3 +30,23 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+
+app:
+  cors:
+    allowed-origins: "*"
+    allow-credentials: false
+
+
+payment:
+  nomba:
+    base-url: ${NOMBA_BASE_URL}
+    account-id: ${NOMBA_PARENT_ACCOUNT_ID}
+    client-id: ${NOMBA_CLIENT_ID}
+    client-secret: ${NOMBA_CLIENT_SECRET}
+    sub-account:
+      enabled: false
+
+http:
+  connect-timeout-ms: 5000
+  response-timeout-ms: 15000
