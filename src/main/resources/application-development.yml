@@ -40,6 +40,8 @@ payment:
     account-id: ${NOMBA_PARENT_ACCOUNT_ID}
     client-id: ${NOMBA_CLIENT_ID}
     client-secret: ${NOMBA_CLIENT_SECRET}
+    sub-account:
+      enabled: false
 
 http:
   connect-timeout-ms: 5000

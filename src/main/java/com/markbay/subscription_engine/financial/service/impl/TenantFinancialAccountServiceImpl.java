@@ -22,6 +22,7 @@ import com.markbay.subscription_engine.security.AuthenticatedTenantProvider;
 import com.markbay.subscription_engine.tenant.entity.Tenant;
 import com.markbay.subscription_engine.tenant.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +40,9 @@ public class TenantFinancialAccountServiceImpl
     private final LedgerService ledgerService;
     private final NombaSubAccountGateway nombaSubAccountGateway;
     private final AuthenticatedTenantProvider authenticatedTenantProvider;
+    @Value("${payment.nomba.sub-account.enabled:false}")
+    private boolean nombaSubAccountEnabled;
+
 
     @Override
     @Transactional
@@ -75,52 +79,21 @@ public class TenantFinancialAccountServiceImpl
 
         financialAccountRepository.save(financialAccount);
 
-        try {
-            NombaSubAccountResult nombaSubAccount =
-                    nombaSubAccountGateway.createSubAccount(accountName, accountRef);
-
-            financialAccount.setProviderAccountId(nombaSubAccount.providerAccountId());
-            financialAccount.setAccountName(nombaSubAccount.accountName());
-            financialAccount.setAccountRef(nombaSubAccount.accountRef());
-            financialAccount.setProviderRawResponse(nombaSubAccount.rawResponse());
-            financialAccount.setStatus(FinancialAccountStatus.ACTIVE);
-            financialAccount.setSetupCompletedAt(Instant.now());
-            financialAccount.setFailureReason(null);
-
-            TenantFinancialAccount savedFinancialAccount =
-                    financialAccountRepository.save(financialAccount);
-
-            List<LedgerAccount> ledgerAccounts =
-                    ledgerService.ensureTenantLedgerAccounts(
-                            tenant,
-                            tenant.getDefaultCurrency()
-                    );
-
-            List<LedgerAccountResponse> ledgerAccountResponses =
-                    ledgerAccounts.stream()
-                            .map(LedgerAccountResponse::from)
-                            .toList();
-
-            return new TenantFinancialSetupResponse(
-                    TenantFinancialAccountResponse.from(savedFinancialAccount),
-                    ledgerAccountResponses
-            );
-
-        } catch (RuntimeException exception) {
-            financialAccount.setStatus(FinancialAccountStatus.FAILED);
-            financialAccount.setFailureReason(exception.getMessage());
-
-            TenantFinancialAccount savedFinancialAccount =
-                    financialAccountRepository.save(financialAccount);
-
-            List<LedgerAccountResponse> ledgerAccounts =
-                    ledgerService.listTenantLedgerAccounts(tenantId);
-
-            return new TenantFinancialSetupResponse(
-                    TenantFinancialAccountResponse.from(savedFinancialAccount),
-                    ledgerAccounts
+        if (!nombaSubAccountEnabled) {
+            return completeInternalLedgerOnlySetup(
+                    tenant,
+                    financialAccount,
+                    accountName,
+                    accountRef
             );
         }
+
+        return completeNombaSubAccountSetup(
+                tenant,
+                financialAccount,
+                accountName,
+                accountRef
+        );
     }
 
     @Override
@@ -149,6 +122,10 @@ public class TenantFinancialAccountServiceImpl
     @Transactional(readOnly = true)
     public TenantFinancialAccountBalanceResponse getCurrentTenantSubAccountBalance() {
         UUID tenantId = authenticatedTenantProvider.getCurrentTenantId();
+
+        if (!nombaSubAccountEnabled) {
+            throw new BadRequestException("Nomba sub-account balance is not available in internal ledger mode");
+        }
 
         TenantFinancialAccount financialAccount =
                 financialAccountRepository.findByTenant_Id(tenantId)
@@ -193,7 +170,7 @@ public class TenantFinancialAccountServiceImpl
             throw new BadRequestException("Tenant financial setup is not complete");
         }
 
-        if (!hasText(financialAccount.getProviderAccountId())) {
+        if (nombaSubAccountEnabled && !hasText(financialAccount.getProviderAccountId())) {
             throw new BadRequestException("Tenant Nomba sub-account is not configured");
         }
 
@@ -208,6 +185,95 @@ public class TenantFinancialAccountServiceImpl
                 .accountRef(resolveAccountRef(tenant, null))
                 .status(FinancialAccountStatus.PENDING)
                 .build();
+    }
+
+    private TenantFinancialSetupResponse completeInternalLedgerOnlySetup(
+            Tenant tenant,
+            TenantFinancialAccount financialAccount,
+            String accountName,
+            String accountRef
+    ) {
+        financialAccount.setProvider(FinancialProvider.NOMBA);
+        financialAccount.setProviderAccountId(null);
+        financialAccount.setAccountName(accountName);
+        financialAccount.setAccountRef(accountRef);
+        financialAccount.setProviderRawResponse("Nomba sub-account creation skipped. Internal ledger mode is active.");
+        financialAccount.setStatus(FinancialAccountStatus.ACTIVE);
+        financialAccount.setSetupCompletedAt(Instant.now());
+        financialAccount.setFailureReason(null);
+
+        TenantFinancialAccount savedFinancialAccount =
+                financialAccountRepository.save(financialAccount);
+
+        List<LedgerAccount> ledgerAccounts =
+                ledgerService.ensureTenantLedgerAccounts(
+                        tenant,
+                        tenant.getDefaultCurrency()
+                );
+
+        List<LedgerAccountResponse> ledgerAccountResponses =
+                ledgerAccounts.stream()
+                        .map(LedgerAccountResponse::from)
+                        .toList();
+
+        return new TenantFinancialSetupResponse(
+                TenantFinancialAccountResponse.from(savedFinancialAccount),
+                ledgerAccountResponses
+        );
+    }
+
+    private TenantFinancialSetupResponse completeNombaSubAccountSetup(
+            Tenant tenant,
+            TenantFinancialAccount financialAccount,
+            String accountName,
+            String accountRef
+    ) {
+        try {
+            NombaSubAccountResult nombaSubAccount =
+                    nombaSubAccountGateway.createSubAccount(accountName, accountRef);
+
+            financialAccount.setProviderAccountId(nombaSubAccount.providerAccountId());
+            financialAccount.setAccountName(nombaSubAccount.accountName());
+            financialAccount.setAccountRef(nombaSubAccount.accountRef());
+            financialAccount.setProviderRawResponse(nombaSubAccount.rawResponse());
+            financialAccount.setStatus(FinancialAccountStatus.ACTIVE);
+            financialAccount.setSetupCompletedAt(Instant.now());
+            financialAccount.setFailureReason(null);
+
+            TenantFinancialAccount savedFinancialAccount =
+                    financialAccountRepository.save(financialAccount);
+
+            List<LedgerAccount> ledgerAccounts =
+                    ledgerService.ensureTenantLedgerAccounts(
+                            tenant,
+                            tenant.getDefaultCurrency()
+                    );
+
+            List<LedgerAccountResponse> ledgerAccountResponses =
+                    ledgerAccounts.stream()
+                            .map(LedgerAccountResponse::from)
+                            .toList();
+
+            return new TenantFinancialSetupResponse(
+                    TenantFinancialAccountResponse.from(savedFinancialAccount),
+                    ledgerAccountResponses
+            );
+
+        } catch (RuntimeException exception) {
+            financialAccount.setStatus(FinancialAccountStatus.FAILED);
+            financialAccount.setFailureReason(exception.getMessage());
+
+            TenantFinancialAccount savedFinancialAccount =
+                    financialAccountRepository.save(financialAccount);
+
+            List<LedgerAccountResponse> ledgerAccounts =
+                    ledgerService.listTenantLedgerAccounts(tenant.getId());
+
+            return new TenantFinancialSetupResponse(
+                    TenantFinancialAccountResponse.from(savedFinancialAccount),
+                    ledgerAccounts
+            );
+        }
     }
 
     private String resolveAccountName(
@@ -247,7 +313,7 @@ public class TenantFinancialAccountServiceImpl
 
         return "tenant_" + tenant.getId().toString().replace("-", "");
     }
-    
+
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isBlank();
