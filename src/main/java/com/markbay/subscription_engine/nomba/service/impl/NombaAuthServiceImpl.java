@@ -151,7 +151,7 @@ public class NombaAuthServiceImpl implements NombaAuthService {
 
         } catch (NombaApiException exception) {
             throw exception;
-            
+
         } catch (ResourceAccessException exception) {
             log.error(
                     "Nomba refresh token network error. message={}",
