@@ -257,7 +257,7 @@ public class NombaSubAccountGateway {
         return null;
     }
 
-    private JsonNode readPath(JsonNode roo  t, String path) {
+    private JsonNode readPath(JsonNode root, String path) {
         String[] parts = path.split("\\.");
 
         JsonNode current = root;
