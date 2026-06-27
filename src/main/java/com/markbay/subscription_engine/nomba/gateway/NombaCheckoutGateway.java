@@ -20,15 +20,22 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class NombaCheckoutGateway {
 
-    @Qualifier("nombaSubAccountRestClient")
     private final RestClient nombaRestClient;
 
     private final NombaAuthService nombaAuthService;
     private final NombaRestClientErrorHandler nombaErrorHandler;
     private final ObjectMapper objectMapper;
+
+    public NombaCheckoutGateway(@Qualifier("nombaSubAccountRestClient")RestClient nombaRestClient,
+                                NombaAuthService nombaAuthService, NombaRestClientErrorHandler nombaErrorHandler,
+                                ObjectMapper objectMapper) {
+        this.nombaRestClient = nombaRestClient;
+        this.nombaAuthService = nombaAuthService;
+        this.nombaErrorHandler = nombaErrorHandler;
+        this.objectMapper = objectMapper;
+    }
 
     public NombaCheckoutOrderResult createCheckoutOrder(
             NombaCreateCheckoutOrderRequest request
