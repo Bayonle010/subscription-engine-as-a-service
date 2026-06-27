@@ -45,16 +45,29 @@ public class RestClientConfig {
     }
 
     @Bean
-    @Qualifier("nombaRestClient")
-    public RestClient nombaRestClient(
+    @Qualifier("nombaParentRestClient")
+    public RestClient nombaParentRestClient(
             RestClient.Builder builder,
             @Value("${payment.nomba.base-url}") String baseUrl,
-            @Value("${payment.nomba.account-id}") String accountId
+            @Value("${payment.nomba.account-id}") String parentAccountId
     ) {
         return builder
                 .baseUrl(baseUrl)
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .defaultHeader("accountId", accountId)
+                .defaultHeader("accountId", parentAccountId)
+                .build();
+    }
+
+
+    @Bean
+    @Qualifier("nombaSubAccountRestClient")
+    public RestClient nombaSubAccountRestClient(
+            RestClient.Builder builder,
+            @Value("${payment.nomba.base-url}") String baseUrl,
+            @Value("${payment.nomba.subaccount-id}") String subAccountId
+    ) {
+        return builder
+                .baseUrl(baseUrl)
+                .defaultHeader("accountId", subAccountId)
                 .build();
     }
 }

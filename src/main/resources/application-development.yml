@@ -38,8 +38,10 @@ payment:
   nomba:
     base-url: ${NOMBA_BASE_URL:https://sandbox.api.nomba.com}
     account-id: ${NOMBA_PARENT_ACCOUNT_ID}
+    subaccount-id: ${NOMBA_SUBACCOUNT_ID}
     client-id: ${NOMBA_CLIENT_ID}
     client-secret: ${NOMBA_CLIENT_SECRET}
+    webhook-secret: ${NOMBA_WEBHOOK_SECRET:}
     sub-account:
       enabled: false
 

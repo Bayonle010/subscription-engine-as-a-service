@@ -23,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 @RequiredArgsConstructor
 public class NombaCheckoutGateway {
 
-    @Qualifier("nombaRestClient")
+    @Qualifier("nombaSubAccountRestClient")
     private final RestClient nombaRestClient;
 
     private final NombaAuthService nombaAuthService;

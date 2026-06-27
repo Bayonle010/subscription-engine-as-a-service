@@ -34,7 +34,7 @@ public class NombaAuthServiceImpl implements NombaAuthService {
     private volatile Instant accessTokenExpiresAt;
 
     public NombaAuthServiceImpl(
-            @Qualifier("nombaRestClient") RestClient nombaRestClient,
+            @Qualifier("nombaParentRestClient") RestClient nombaRestClient,
             @Value("${payment.nomba.client-id}") String clientId,
             @Value("${payment.nomba.client-secret}") String clientSecret,
             NombaRestClientErrorHandler nombaErrorHandler
