@@ -168,7 +168,7 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
 
         return plan.getBillingIntervalCount();
     }
-    
+
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
     }
