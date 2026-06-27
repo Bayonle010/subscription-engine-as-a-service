@@ -1,5 +1,6 @@
 package com.markbay.subscription_engine.subscription.service.impl;
 
+import com.markbay.subscription_engine.billing.service.InitialSubscriptionBillingService;
 import com.markbay.subscription_engine.common.exception.BadRequestException;
 import com.markbay.subscription_engine.customer.entity.Customer;
 import com.markbay.subscription_engine.customer.service.CustomerService;
@@ -32,6 +33,7 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
     private final SubscriptionRepository subscriptionRepository;
     private final CustomerService customerService;
     private final CustomerPaymentMethodService paymentMethodService;
+    private final InitialSubscriptionBillingService initialSubscriptionBillingService;
 
     @Override
     @Transactional
@@ -94,6 +96,12 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
         checkoutSession.setCompletedAt(now);
 
         Subscription savedSubscription = subscriptionRepository.save(subscription);
+
+        initialSubscriptionBillingService.recordInitialSubscriptionPayment(
+                savedSubscription,
+                checkoutSession,
+                verifiedTransaction
+        );
 
         log.info(
                 "Subscription activated. tenantId={}, customerId={}, subscriptionId={}, checkoutSessionId={}",

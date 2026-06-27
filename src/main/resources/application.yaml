@@ -52,3 +52,9 @@ payment:
 http:
   connect-timeout-ms: 5000
   response-timeout-ms: 15000
+
+
+billing:
+  platform-fee:
+    percentage: ${PLATFORM_FEE_PERCENTAGE:0}
+    fixed-amount: ${PLATFORM_FEE_FIXED_AMOUNT:0}
