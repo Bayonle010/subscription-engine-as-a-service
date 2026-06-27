@@ -3,6 +3,7 @@ package com.markbay.subscription_engine.ledger.controller;
 import com.markbay.subscription_engine.common.response.ApiResponse;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
 import com.markbay.subscription_engine.ledger.dto.LedgerAccountResponse;
+import com.markbay.subscription_engine.ledger.dto.LedgerBalanceResponse;
 import com.markbay.subscription_engine.ledger.service.LedgerService;
 import com.markbay.subscription_engine.security.AuthenticatedTenantProvider;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,30 @@ public class LedgerController {
                 ResponseUtil.success(
                         0,
                         "Ledger accounts retrieved successfully",
+                        null,
+                        response,
+                        null
+                )
+        );
+    }
+
+
+    @PreAuthorize("hasAnyRole('OWNER', 'ADMIN', 'DEVELOPER', 'SUPPORT')")
+    @GetMapping("/balance")
+    public ResponseEntity<ApiResponse<LedgerBalanceResponse>> getMerchantBalance(
+            @RequestParam(required = false, defaultValue = "NGN") String currency
+    ) {
+        UUID tenantId = authenticatedTenantProvider.getCurrentTenantId();
+
+        LedgerBalanceResponse response = ledgerService.getTenantMerchantBalance(
+                tenantId,
+                currency
+        );
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        0,
+                        "Merchant ledger balance retrieved successfully",
                         null,
                         response,
                         null

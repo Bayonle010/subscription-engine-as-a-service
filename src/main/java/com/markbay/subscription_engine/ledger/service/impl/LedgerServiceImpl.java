@@ -1,6 +1,8 @@
 package com.markbay.subscription_engine.ledger.service.impl;
 
+import com.markbay.subscription_engine.common.exception.BadRequestException;
 import com.markbay.subscription_engine.ledger.dto.LedgerAccountResponse;
+import com.markbay.subscription_engine.ledger.dto.LedgerBalanceResponse;
 import com.markbay.subscription_engine.ledger.entity.LedgerAccount;
 import com.markbay.subscription_engine.ledger.enums.LedgerAccountStatus;
 import com.markbay.subscription_engine.ledger.enums.LedgerAccountType;
@@ -44,6 +46,27 @@ public class LedgerServiceImpl implements LedgerService {
                 .stream()
                 .map(LedgerAccountResponse::from)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public LedgerBalanceResponse getTenantMerchantBalance(
+            UUID tenantId,
+            String currency
+    ) {
+        String resolvedCurrency = resolveCurrency(currency);
+
+        LedgerAccount merchantPayableAccount = ledgerAccountRepository
+                .findByTenant_IdAndTypeAndCurrency(
+                        tenantId,
+                        LedgerAccountType.MERCHANT_PAYABLE,
+                        resolvedCurrency
+                )
+                .orElseThrow(() -> new BadRequestException(
+                        "Tenant ledger setup is not complete"
+                ));
+
+        return LedgerBalanceResponse.from(merchantPayableAccount);
     }
 
     private void createIfMissing(
