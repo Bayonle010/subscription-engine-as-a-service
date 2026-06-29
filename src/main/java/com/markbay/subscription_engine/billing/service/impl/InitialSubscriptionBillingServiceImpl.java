@@ -4,6 +4,9 @@ import com.markbay.subscription_engine.billing.dto.BillingFeeResult;
 import com.markbay.subscription_engine.billing.dto.BillingRecordResult;
 import com.markbay.subscription_engine.billing.service.BillingFeeService;
 import com.markbay.subscription_engine.billing.service.InitialSubscriptionBillingService;
+import com.markbay.subscription_engine.eventoutbox.dto.CreateEventOutboxCommand;
+import com.markbay.subscription_engine.eventoutbox.enums.EventOutboxType;
+import com.markbay.subscription_engine.eventoutbox.service.EventOutboxService;
 import com.markbay.subscription_engine.invoice.entity.Invoice;
 import com.markbay.subscription_engine.invoice.enums.InvoiceBillingReason;
 import com.markbay.subscription_engine.invoice.enums.InvoiceStatus;
@@ -36,6 +39,7 @@ public class InitialSubscriptionBillingServiceImpl
     private final PaymentRepository paymentRepository;
     private final BillingFeeService billingFeeService;
     private final LedgerPostingService ledgerPostingService;
+    private final EventOutboxService eventOutboxService;
 
     @Override
     @Transactional
@@ -126,6 +130,13 @@ public class InitialSubscriptionBillingServiceImpl
             );
 
             Payment updatedPayment = paymentRepository.save(savedPayment);
+
+            recordOutboxEvents(
+                    subscription,
+                    savedInvoice,
+                    updatedPayment,
+                    ledgerPostingResult
+            );
 
             log.info(
                     "Initial subscription billing recorded. tenantId={}, subscriptionId={}, invoiceId={}, paymentId={}, ledgerTransactionRef={}",
@@ -227,5 +238,91 @@ public class InitialSubscriptionBillingServiceImpl
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private void recordOutboxEvents(
+            Subscription subscription,
+            Invoice invoice,
+            Payment payment,
+            LedgerPostingResult ledgerPostingResult
+    ) {
+        var payload = java.util.Map.ofEntries(
+                java.util.Map.entry("tenantId", subscription.getTenant().getId().toString()),
+                java.util.Map.entry("customerId", subscription.getCustomer().getId().toString()),
+                java.util.Map.entry("customerEmail", subscription.getCustomer().getEmail()),
+                java.util.Map.entry(
+                        "customerName",
+                        buildCustomerName(
+                                subscription.getCustomer().getFirstName(),
+                                subscription.getCustomer().getLastName()
+                        )
+                ),
+                java.util.Map.entry("subscriptionId", subscription.getId().toString()),
+                java.util.Map.entry("subscriptionStatus", subscription.getStatus().name()),
+                java.util.Map.entry("planId", subscription.getPlan().getId().toString()),
+                java.util.Map.entry("planName", subscription.getPlan().getName()),
+                java.util.Map.entry("invoiceId", invoice.getId().toString()),
+                java.util.Map.entry("invoiceNumber", invoice.getInvoiceNumber()),
+                java.util.Map.entry("paymentId", payment.getId().toString()),
+                java.util.Map.entry("orderReference", payment.getOrderReference()),
+                java.util.Map.entry("providerTransactionReference", payment.getProviderTransactionReference()),
+                java.util.Map.entry("ledgerTransactionRef", ledgerPostingResult.transactionRef()),
+                java.util.Map.entry("amount", payment.getAmount().toPlainString()),
+                java.util.Map.entry("platformFee", payment.getPlatformFee().toPlainString()),
+                java.util.Map.entry("netAmount", payment.getNetAmount().toPlainString()),
+                java.util.Map.entry("currency", payment.getCurrency())
+        );
+
+        eventOutboxService.recordEvent(
+                CreateEventOutboxCommand.builder()
+                        .tenant(subscription.getTenant())
+                        .eventType(EventOutboxType.SUBSCRIPTION_ACTIVATED)
+                        .eventReference("subscription.activated:" + subscription.getId())
+                        .aggregateType("subscription")
+                        .aggregateId(subscription.getId().toString())
+                        .payload(payload)
+                        .build()
+        );
+
+        eventOutboxService.recordEvent(
+                CreateEventOutboxCommand.builder()
+                        .tenant(subscription.getTenant())
+                        .eventType(EventOutboxType.INVOICE_PAID)
+                        .eventReference("invoice.paid:" + invoice.getId())
+                        .aggregateType("invoice")
+                        .aggregateId(invoice.getId().toString())
+                        .payload(payload)
+                        .build()
+        );
+
+        eventOutboxService.recordEvent(
+                CreateEventOutboxCommand.builder()
+                        .tenant(subscription.getTenant())
+                        .eventType(EventOutboxType.PAYMENT_SUCCEEDED)
+                        .eventReference("payment.succeeded:" + payment.getId())
+                        .aggregateType("payment")
+                        .aggregateId(payment.getId().toString())
+                        .payload(payload)
+                        .build()
+        );
+    }
+
+    private String buildCustomerName(
+            String firstName,
+            String lastName
+    ) {
+        String fullName = (
+                safe(firstName) + " " + safe(lastName)
+        ).trim();
+
+        if (fullName.isBlank()) {
+            return "there";
+        }
+
+        return fullName;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.trim();
     }
 }
