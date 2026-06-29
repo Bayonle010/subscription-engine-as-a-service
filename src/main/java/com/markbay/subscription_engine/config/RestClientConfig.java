@@ -70,4 +70,32 @@ public class RestClientConfig {
                 .defaultHeader("accountId", subAccountId)
                 .build();
     }
+
+
+    @Bean
+    @Qualifier("zeptomailRestClient")
+    public RestClient zeptoMailRestClient(
+            RestClient.Builder builder,
+            @Value("${zeptomail.base-url}") String baseUrl,
+            @Value("${zeptomail.token}") String token
+    ) {
+        return builder
+                .baseUrl(baseUrl)
+                .defaultHeader(HttpHeaders.AUTHORIZATION, resolveZeptoAuthorizationHeader(token))
+                .build();
+    }
+
+    private String resolveZeptoAuthorizationHeader(String token) {
+        if (token == null || token.isBlank()) {
+            return "";
+        }
+
+        String trimmedToken = token.trim();
+
+        if (trimmedToken.toLowerCase().startsWith("zoho-enczapikey ")) {
+            return trimmedToken;
+        }
+
+        return "Zoho-enczapikey " + trimmedToken;
+    }
 }

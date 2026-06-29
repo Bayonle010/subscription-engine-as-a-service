@@ -51,3 +51,24 @@ payment:
 http:
   connect-timeout-ms: 5000
   response-timeout-ms: 15000
+
+billing:
+  platform-fee:
+    percentage: ${PLATFORM_FEE_PERCENTAGE:0}
+    fixed-amount: ${PLATFORM_FEE_FIXED_AMOUNT:0}
+
+mail:
+  transport: api
+
+zeptomail:
+  base-url: https://api.zeptomail.com/v1.1
+  token: ${ZEPTOMAIL_TOKEN}
+  from:
+    address: noreply@subgrid.com
+    name: Subgrid
+  reply-to: ${ZEPTOMAIL_REPLY_TO:}
+  include-text: true
+
+event-outbox:
+  processor:
+    fixed-delay-ms: 30000
