@@ -11,7 +11,9 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "customer-portal")
 public class CustomerPortalProperties {
 
-    private String publicBaseUrl = "http://localhost:8083";
+    private String publicBaseUrl = "http://localhost:8082";
 
     private int rescueLinkExpiryHours = 168;
+
+    private int managementLinkExpiryHours = 720;
 }

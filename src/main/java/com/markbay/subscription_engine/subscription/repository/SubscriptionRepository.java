@@ -15,6 +15,21 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.markbay.subscription_engine.subscription.entity.Subscription;
+import com.markbay.subscription_engine.subscription.enums.SubscriptionStatus;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
 public interface SubscriptionRepository extends JpaRepository<Subscription, UUID> {
 
     @EntityGraph(attributePaths = {
@@ -25,6 +40,14 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
             "checkoutSession"
     })
     Optional<Subscription> findByCheckoutSession_Id(UUID checkoutSessionId);
+
+    @EntityGraph(attributePaths = {
+            "tenant",
+            "customer",
+            "plan",
+            "paymentMethod"
+    })
+    Optional<Subscription> findByIdAndTenant_Id(UUID subscriptionId, UUID tenantId);
 
     @Query("""
             SELECT subscription.id
