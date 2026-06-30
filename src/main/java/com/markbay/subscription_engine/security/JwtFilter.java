@@ -189,6 +189,7 @@ public class JwtFilter extends OncePerRequestFilter {
                 || uri.startsWith("/v3/api-docs")
                 || uri.equals("/swagger-ui.html")
                 || uri.equals("/api/v1/customer-portal/sessions/")
+                || uri.equals("/webhooks/nomba")
                 || uri.startsWith("/webhooks/nomba/");
     }
 }
