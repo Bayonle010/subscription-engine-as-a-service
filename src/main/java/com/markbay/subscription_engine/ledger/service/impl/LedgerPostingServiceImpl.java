@@ -171,6 +171,24 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
         );
     }
 
+
+    @Override
+    @Transactional
+    public LedgerPostingResult postRenewalSubscriptionPayment(
+            Subscription subscription,
+            Payment payment,
+            BillingFeeResult feeResult
+    ) {
+        return postSubscriptionPayment(
+                subscription,
+                payment,
+                feeResult,
+                "RENEWAL_SUBSCRIPTION_PAYMENT",
+                "Renewal subscription payment",
+                "RENEWAL_SUB_PAYMENT:"
+        );
+    }
+
     private LedgerAccount lockLedgerAccount(
             UUID tenantId,
             LedgerAccountType type,
@@ -185,6 +203,156 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
                 .orElseThrow(() -> new BadRequestException(
                         "Tenant ledger account is missing: " + type
                 ));
+    }
+
+    private LedgerPostingResult postSubscriptionPayment(
+            Subscription subscription,
+            Payment payment,
+            BillingFeeResult feeResult,
+            String sourceType,
+            String description,
+            String transactionRefPrefix
+    ) {
+        String transactionRef = buildTransactionRef(payment, transactionRefPrefix);
+
+        var existingTransaction =
+                ledgerTransactionRepository.findByTransactionRef(transactionRef);
+
+        if (existingTransaction.isPresent()) {
+            log.info(
+                    "Subscription ledger posting already exists. transactionRef={}",
+                    transactionRef
+            );
+
+            return new LedgerPostingResult(
+                    existingTransaction.get().getId(),
+                    transactionRef,
+                    feeResult.grossAmount(),
+                    feeResult.platformFee(),
+                    feeResult.merchantNetAmount(),
+                    feeResult.currency()
+            );
+        }
+
+        UUID tenantId = subscription.getTenant().getId();
+        String currency = feeResult.currency();
+
+        LedgerAccount cashClearingAccount = lockLedgerAccount(
+                tenantId,
+                LedgerAccountType.CASH_CLEARING,
+                currency
+        );
+
+        LedgerAccount merchantPayableAccount = lockLedgerAccount(
+                tenantId,
+                LedgerAccountType.MERCHANT_PAYABLE,
+                currency
+        );
+
+        LedgerAccount platformFeeAccount = null;
+
+        if (isPositive(feeResult.platformFee())) {
+            platformFeeAccount = lockLedgerAccount(
+                    tenantId,
+                    LedgerAccountType.PLATFORM_FEE,
+                    currency
+            );
+        }
+
+        LedgerTransaction ledgerTransaction = LedgerTransaction.builder()
+                .tenant(subscription.getTenant())
+                .transactionRef(transactionRef)
+                .sourceType(sourceType)
+                .sourceId(payment.getId().toString())
+                .description(description)
+                .status(LedgerTransactionStatus.POSTED)
+                .build();
+
+        ledgerTransaction.addEntry(
+                LedgerEntry.builder()
+                        .ledgerAccount(cashClearingAccount)
+                        .entryType(LedgerEntryType.DEBIT)
+                        .amount(feeResult.grossAmount())
+                        .currency(currency)
+                        .build()
+        );
+
+        ledgerTransaction.addEntry(
+                LedgerEntry.builder()
+                        .ledgerAccount(merchantPayableAccount)
+                        .entryType(LedgerEntryType.CREDIT)
+                        .amount(feeResult.merchantNetAmount())
+                        .currency(currency)
+                        .build()
+        );
+
+        if (platformFeeAccount != null) {
+            ledgerTransaction.addEntry(
+                    LedgerEntry.builder()
+                            .ledgerAccount(platformFeeAccount)
+                            .entryType(LedgerEntryType.CREDIT)
+                            .amount(feeResult.platformFee())
+                            .currency(currency)
+                            .build()
+            );
+        }
+
+        assertBalanced(ledgerTransaction);
+
+        applyEntryToBalance(
+                cashClearingAccount,
+                LedgerEntryType.DEBIT,
+                feeResult.grossAmount()
+        );
+
+        applyEntryToBalance(
+                merchantPayableAccount,
+                LedgerEntryType.CREDIT,
+                feeResult.merchantNetAmount()
+        );
+
+        if (platformFeeAccount != null) {
+            applyEntryToBalance(
+                    platformFeeAccount,
+                    LedgerEntryType.CREDIT,
+                    feeResult.platformFee()
+            );
+        }
+
+        LedgerTransaction savedTransaction =
+                ledgerTransactionRepository.save(ledgerTransaction);
+
+        log.info(
+                "Subscription ledger posting completed. tenantId={}, subscriptionId={}, paymentId={}, transactionRef={}, grossAmount={}, merchantNetAmount={}, platformFee={}, currency={}",
+                tenantId,
+                subscription.getId(),
+                payment.getId(),
+                transactionRef,
+                feeResult.grossAmount(),
+                feeResult.merchantNetAmount(),
+                feeResult.platformFee(),
+                currency
+        );
+
+        return new LedgerPostingResult(
+                savedTransaction.getId(),
+                transactionRef,
+                feeResult.grossAmount(),
+                feeResult.platformFee(),
+                feeResult.merchantNetAmount(),
+                currency
+        );
+    }
+
+    private String buildTransactionRef(
+            Payment payment,
+            String prefix
+    ) {
+        if (hasText(payment.getProviderTransactionReference())) {
+            return prefix + payment.getProviderTransactionReference();
+        }
+
+        return prefix + payment.getOrderReference();
     }
 
     private String buildTransactionRef(Payment payment) {

@@ -86,6 +86,7 @@ public class InitialSubscriptionBillingServiceImpl
                     .currency(feeResult.currency())
                     .periodStart(subscription.getCurrentPeriodStart())
                     .periodEnd(subscription.getCurrentPeriodEnd())
+                    .billingReference("initial:" + checkoutSession.getOrderReference())
                     .dueAt(paidAt)
                     .paidAt(paidAt)
                     .description("Initial subscription payment")

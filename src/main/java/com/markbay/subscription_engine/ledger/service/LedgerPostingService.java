@@ -12,4 +12,11 @@ public interface LedgerPostingService {
             Payment payment,
             BillingFeeResult feeResult
     );
+
+    LedgerPostingResult postRenewalSubscriptionPayment(
+            Subscription subscription,
+            Payment payment,
+            BillingFeeResult feeResult
+    );
+
 }

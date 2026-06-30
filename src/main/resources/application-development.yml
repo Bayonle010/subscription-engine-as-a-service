@@ -70,3 +70,9 @@ zeptomail:
 event-outbox:
   processor:
     fixed-delay-ms: 30000
+
+
+renewal:
+  processor:
+    fixed-delay-ms: 60000
+    batch-size: 25

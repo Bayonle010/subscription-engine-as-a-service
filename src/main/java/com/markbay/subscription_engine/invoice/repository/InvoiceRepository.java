@@ -11,6 +11,8 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     boolean existsByInvoiceNumber(String invoiceNumber);
 
+    Optional<Invoice> findByBillingReference(String billingReference);
+
     @EntityGraph(attributePaths = {
             "tenant",
             "customer",
