@@ -3,6 +3,7 @@ package com.markbay.subscription_engine.eventoutbox.enums;
 public enum EventOutboxType {
 
     SUBSCRIPTION_ACTIVATED("subscription.activated"),
+    SUBSCRIPTION_UPDATED("subscription.updated"),
     INVOICE_PAID("invoice.paid"),
     PAYMENT_SUCCEEDED("payment.succeeded"),
     PAYMENT_FAILED("payment.failed"),
@@ -20,16 +21,13 @@ public enum EventOutboxType {
     }
 
     public static EventOutboxType from(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-
-        for (EventOutboxType eventType : values()) {
-            if (eventType.value.equalsIgnoreCase(value.trim())) {
-                return eventType;
+        for (EventOutboxType type : values()) {
+            if (type.name().equalsIgnoreCase(value)
+                    || type.value.equalsIgnoreCase(value)) {
+                return type;
             }
         }
 
-        return null;
+        throw new IllegalArgumentException("Unsupported event outbox type: " + value);
     }
 }
