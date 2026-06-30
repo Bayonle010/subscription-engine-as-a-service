@@ -95,3 +95,11 @@ customer-portal:
   public-base-url: ${CUSTOMER_PORTAL_PUBLIC_BASE_URL:http://localhost:8083}
   rescue-link-expiry-hours: 168
   management-link-expiry-hours: 720
+
+reconciliation:
+  fixed-delay-ms: 120000
+  batch-size: 25
+  pending-min-age-minutes: 5
+  pending-expire-after-hours: 24
+  retry-failed-webhooks: true
+  failed-webhook-retry-age-minutes: 2
