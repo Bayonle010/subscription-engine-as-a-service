@@ -76,3 +76,15 @@ renewal:
   processor:
     fixed-delay-ms: 60000
     batch-size: 25
+
+dunning:
+  grace-period-days: 7
+  max-retry-attempts: 3
+  retry-delays-hours:
+    - 24
+    - 72
+    - 168
+  cancel-after-final-failure: true
+  processor:
+    fixed-delay-ms: 60000
+    batch-size: 25

@@ -2,6 +2,7 @@ package com.markbay.subscription_engine.renewal.service.impl;
 
 import com.markbay.subscription_engine.billing.dto.BillingFeeResult;
 import com.markbay.subscription_engine.billing.service.BillingFeeService;
+import com.markbay.subscription_engine.dunning.service.DunningService;
 import com.markbay.subscription_engine.eventoutbox.dto.CreateEventOutboxCommand;
 import com.markbay.subscription_engine.eventoutbox.enums.EventOutboxType;
 import com.markbay.subscription_engine.eventoutbox.service.EventOutboxService;
@@ -58,6 +59,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     private final LedgerPostingService ledgerPostingService;
     private final EventOutboxService eventOutboxService;
     private final NombaTokenizedCardChargeGateway tokenizedCardChargeGateway;
+    private final DunningService dunningService;
 
     @Override
     @Transactional(readOnly = true)
@@ -353,6 +355,14 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         subscription.setStatus(SubscriptionStatus.PAST_DUE);
 
         recordPaymentFailedEvent(
+                subscription,
+                invoice,
+                attempt,
+                billingReference,
+                failureReason
+        );
+
+        dunningService.openCaseForFailedRenewal(
                 subscription,
                 invoice,
                 attempt,
