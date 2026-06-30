@@ -40,6 +40,15 @@ public class OutboxEmailNotificationServiceImpl implements OutboxEmailNotificati
         if (event.getEventType() == EventOutboxType.PAYMENT_SUCCEEDED) {
             sendPaymentSucceededEmail(event);
         }
+
+        if (event.getEventType() == EventOutboxType.PAYMENT_FAILED) {
+            sendPaymentFailedEmail(event);
+            return;
+        }
+
+        if (event.getEventType() == EventOutboxType.SUBSCRIPTION_CANCELLED) {
+            sendSubscriptionCancelledEmail(event);
+        }
     }
 
     private void sendSubscriptionActivatedEmail(EventOutbox event) {
@@ -214,6 +223,111 @@ public class OutboxEmailNotificationServiceImpl implements OutboxEmailNotificati
                     exception
             );
         }
+    }
+
+    private void sendPaymentFailedEmail(EventOutbox event) {
+        JsonNode payload = readPayload(event);
+
+        String customerEmail = text(payload, "customerEmail");
+        String customerName = text(payload, "customerName");
+        String amount = text(payload, "amount");
+        String currency = text(payload, "currency");
+        String reason = text(payload, "reason");
+        String paymentRescueUrl = text(payload, "paymentRescueUrl");
+
+        if (!hasText(customerEmail)) {
+            log.warn(
+                    "Skipping payment failed email because customer email is missing. eventId={}",
+                    event.getId()
+            );
+            return;
+        }
+
+        String subject = "Payment failed";
+
+        String body = """
+            Hi {{customerName}},
+            
+            We could not process your payment of {{amount}} {{currency}}.
+            
+            Reason: {{reason}}
+            
+            We will retry the payment automatically during the grace period.
+            
+            Thank you.
+            """;
+
+        sendOnce(
+                event,
+                customerEmail,
+                subject,
+                body,
+                List.of(
+                        EmailParam.builder()
+                                .name("customerName")
+                                .value(hasText(customerName) ? customerName : "there")
+                                .build(),
+                        EmailParam.builder()
+                                .name("amount")
+                                .value(hasText(amount) ? amount : "")
+                                .build(),
+                        EmailParam.builder()
+                                .name("currency")
+                                .value(hasText(currency) ? currency : "")
+                                .build(),
+                        EmailParam.builder()
+                                .name("reason")
+                                .value(hasText(reason) ? reason : "Payment failed")
+                                .build(),
+                        EmailParam.builder()
+                                .name("paymentRescueUrl")
+                                .value(hasText(paymentRescueUrl) ? paymentRescueUrl : "")
+                                .build()
+                )
+        );
+    }
+
+    private void sendSubscriptionCancelledEmail(EventOutbox event) {
+        JsonNode payload = readPayload(event);
+
+        String customerEmail = text(payload, "customerEmail");
+        String customerName = text(payload, "customerName");
+        String planName = text(payload, "planName");
+
+        if (!hasText(customerEmail)) {
+            log.warn(
+                    "Skipping subscription cancelled email because customer email is missing. eventId={}",
+                    event.getId()
+            );
+            return;
+        }
+
+        String subject = "Subscription cancelled";
+
+        String body = """
+            Hi {{customerName}},
+            
+            Your subscription to {{planName}} has been cancelled because payment could not be collected.
+            
+            Thank you.
+            """;
+
+        sendOnce(
+                event,
+                customerEmail,
+                subject,
+                body,
+                List.of(
+                        EmailParam.builder()
+                                .name("customerName")
+                                .value(hasText(customerName) ? customerName : "there")
+                                .build(),
+                        EmailParam.builder()
+                                .name("planName")
+                                .value(hasText(planName) ? planName : "your plan")
+                                .build()
+                )
+        );
     }
 
     private JsonNode readPayload(EventOutbox event) {

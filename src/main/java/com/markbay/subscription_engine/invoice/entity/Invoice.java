@@ -29,6 +29,10 @@ import java.util.UUID;
                 @UniqueConstraint(
                         name = "uk_invoices_checkout_session_id",
                         columnNames = "checkout_session_id"
+                ),
+                @UniqueConstraint(
+                        name = "uk_invoices_billing_reference",
+                        columnNames = "billing_reference"
                 )
         },
         indexes = {
@@ -77,6 +81,9 @@ public class Invoice {
 
     @Column(name = "amount_paid", nullable = false, precision = 19, scale = 4)
     private BigDecimal amountPaid;
+
+    @Column(name = "billing_reference", unique = true)
+    private String billingReference;
 
     @Column(nullable = false, length = 3)
     private String currency;

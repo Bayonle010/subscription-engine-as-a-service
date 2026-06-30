@@ -1,6 +1,8 @@
 package com.markbay.subscription_engine.webhook.service.impl;
 
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
+import com.markbay.subscription_engine.customerportal.repository.PaymentRescueCheckoutSessionRepository;
+import com.markbay.subscription_engine.customerportal.service.PaymentRescueCompletionService;
 import com.markbay.subscription_engine.nomba.dto.response.NombaVerifiedTransactionResult;
 import com.markbay.subscription_engine.nomba.dto.response.NombaWebhookPaymentData;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransactionGateway;
@@ -33,6 +35,8 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
     private final NombaWebhookPayloadExtractor payloadExtractor;
     private final NombaTransactionGateway nombaTransactionGateway;
     private final SubscriptionActivationService subscriptionActivationService;
+    private final PaymentRescueCompletionService paymentRescueCompletionService;
+    private final PaymentRescueCheckoutSessionRepository paymentRescueCheckoutSessionRepository;
 
     @Override
     @Transactional
@@ -111,29 +115,55 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
             throw new IllegalStateException("Nomba webhook order reference is missing");
         }
 
-        SubscriptionCheckoutSession checkoutSession = checkoutSessionRepository
-                .findByOrderReference(orderReference)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Subscription checkout session not found"
-                ));
+        var subscriptionCheckoutSession =
+                checkoutSessionRepository.findByOrderReference(orderReference);
 
-        if (checkoutSession.getStatus() == CheckoutSessionStatus.COMPLETED) {
-            log.info(
-                    "Checkout session already completed. checkoutSessionId={}, orderReference={}",
-                    checkoutSession.getId(),
-                    orderReference
+        if (subscriptionCheckoutSession.isPresent()) {
+            SubscriptionCheckoutSession checkoutSession =
+                    subscriptionCheckoutSession.get();
+
+            if (checkoutSession.getStatus() == CheckoutSessionStatus.COMPLETED) {
+                log.info(
+                        "Checkout session already completed. checkoutSessionId={}, orderReference={}",
+                        checkoutSession.getId(),
+                        orderReference
+                );
+
+                return;
+            }
+
+            NombaVerifiedTransactionResult verifiedTransaction =
+                    nombaTransactionGateway.verifyByOrderReference(orderReference);
+
+            subscriptionActivationService.activateFromSuccessfulCheckout(
+                    checkoutSession,
+                    verifiedTransaction,
+                    paymentData
             );
 
             return;
         }
 
-        NombaVerifiedTransactionResult verifiedTransaction =
-                nombaTransactionGateway.verifyByOrderReference(orderReference);
+        var paymentRescueCheckoutSession =
+                paymentRescueCheckoutSessionRepository.findByOrderReference(orderReference);
 
-        subscriptionActivationService.activateFromSuccessfulCheckout(
-                checkoutSession,
-                verifiedTransaction,
-                paymentData
+        if (paymentRescueCheckoutSession.isPresent()) {
+            NombaVerifiedTransactionResult verifiedTransaction =
+                    nombaTransactionGateway.verifyByOrderReference(orderReference);
+
+            paymentRescueCompletionService.completeSuccessfulRescuePayment(
+                    orderReference,
+                    verifiedTransaction,
+                    paymentData
+            );
+
+            return;
+        }
+
+        log.warn(
+                "Payment success webhook ignored because order reference was not found. eventId={}, orderReference={}",
+                event.getId(),
+                orderReference
         );
     }
 
@@ -151,33 +181,57 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
             return;
         }
 
-        checkoutSessionRepository.findByOrderReference(orderReference)
-                .ifPresentOrElse(
-                        checkoutSession -> {
-                            if (checkoutSession.getStatus() == CheckoutSessionStatus.COMPLETED) {
-                                log.info(
-                                        "Ignoring payment failed webhook because checkout is already completed. checkoutSessionId={}, orderReference={}",
-                                        checkoutSession.getId(),
-                                        orderReference
-                                );
+        var subscriptionCheckoutSession =
+                checkoutSessionRepository.findByOrderReference(orderReference);
 
-                                return;
-                            }
+        if (subscriptionCheckoutSession.isPresent()) {
+            SubscriptionCheckoutSession checkoutSession =
+                    subscriptionCheckoutSession.get();
 
-                            checkoutSession.setStatus(CheckoutSessionStatus.FAILED);
-                            checkoutSession.setFailedAt(Instant.now());
-
-                            log.info(
-                                    "Checkout session marked as failed. checkoutSessionId={}, orderReference={}",
-                                    checkoutSession.getId(),
-                                    orderReference
-                            );
-                        },
-                        () -> log.warn(
-                                "Payment failed webhook checkout session not found. orderReference={}",
-                                orderReference
-                        )
+            if (checkoutSession.getStatus() == CheckoutSessionStatus.COMPLETED) {
+                log.info(
+                        "Ignoring payment failed webhook because checkout is already completed. checkoutSessionId={}, orderReference={}",
+                        checkoutSession.getId(),
+                        orderReference
                 );
+
+                return;
+            }
+
+            checkoutSession.setStatus(CheckoutSessionStatus.FAILED);
+            checkoutSession.setFailedAt(Instant.now());
+
+            log.info(
+                    "Checkout session marked as failed. checkoutSessionId={}, orderReference={}",
+                    checkoutSession.getId(),
+                    orderReference
+            );
+
+            return;
+        }
+
+        var paymentRescueCheckoutSession =
+                paymentRescueCheckoutSessionRepository.findByOrderReference(orderReference);
+
+        if (paymentRescueCheckoutSession.isPresent()) {
+            paymentRescueCompletionService.markRescuePaymentFailed(
+                    orderReference,
+                    "Payment rescue checkout failed"
+            );
+
+            log.info(
+                    "Payment rescue checkout marked as failed. orderReference={}",
+                    orderReference
+            );
+
+            return;
+        }
+
+        log.warn(
+                "Payment failed webhook ignored because order reference was not found. eventId={}, orderReference={}",
+                event.getId(),
+                orderReference
+        );
     }
 
     private boolean isAlreadyHandled(InboundWebhookEvent event) {

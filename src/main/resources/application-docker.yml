@@ -72,3 +72,25 @@ zeptomail:
 event-outbox:
   processor:
     fixed-delay-ms: 30000
+
+
+renewal:
+  processor:
+    fixed-delay-ms: 60000
+    batch-size: 25
+
+dunning:
+  grace-period-days: 7
+  max-retry-attempts: 3
+  retry-delays-hours:
+    - 24
+    - 72
+    - 168
+  cancel-after-final-failure: true
+  processor:
+    fixed-delay-ms: 60000
+    batch-size: 25
+
+customer-portal:
+  public-base-url: ${CUSTOMER_PORTAL_PUBLIC_BASE_URL:http://localhost:8083}
+  rescue-link-expiry-hours: 168

@@ -9,6 +9,7 @@ import com.nimbusds.jose.proc.SecurityContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -61,6 +62,8 @@ public class SecurityConfig {
                 .cors(cors-> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(WHITE_LIST_URLS).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/customer-portal/sessions/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/customer-portal/sessions/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
