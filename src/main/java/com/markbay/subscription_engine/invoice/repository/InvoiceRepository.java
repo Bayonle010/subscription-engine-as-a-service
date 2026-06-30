@@ -20,4 +20,14 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             "checkoutSession"
     })
     Optional<Invoice> findByCheckoutSession_Id(UUID checkoutSessionId);
+
+    @EntityGraph(attributePaths = {
+            "tenant",
+            "customer",
+            "subscription",
+            "subscription.plan",
+            "subscription.paymentMethod",
+            "checkoutSession"
+    })
+    Optional<Invoice> findByIdAndTenant_Id(UUID invoiceId, UUID tenantId);
 }

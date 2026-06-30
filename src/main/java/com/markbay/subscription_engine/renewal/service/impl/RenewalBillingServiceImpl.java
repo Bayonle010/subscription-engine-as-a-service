@@ -354,13 +354,6 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
 
         subscription.setStatus(SubscriptionStatus.PAST_DUE);
 
-        recordPaymentFailedEvent(
-                subscription,
-                invoice,
-                attempt,
-                billingReference,
-                failureReason
-        );
 
         dunningService.openCaseForFailedRenewal(
                 subscription,

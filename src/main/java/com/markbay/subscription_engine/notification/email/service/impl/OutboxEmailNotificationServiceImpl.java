@@ -233,6 +233,7 @@ public class OutboxEmailNotificationServiceImpl implements OutboxEmailNotificati
         String amount = text(payload, "amount");
         String currency = text(payload, "currency");
         String reason = text(payload, "reason");
+        String paymentRescueUrl = text(payload, "paymentRescueUrl");
 
         if (!hasText(customerEmail)) {
             log.warn(
@@ -277,6 +278,10 @@ public class OutboxEmailNotificationServiceImpl implements OutboxEmailNotificati
                         EmailParam.builder()
                                 .name("reason")
                                 .value(hasText(reason) ? reason : "Payment failed")
+                                .build(),
+                        EmailParam.builder()
+                                .name("paymentRescueUrl")
+                                .value(hasText(paymentRescueUrl) ? paymentRescueUrl : "")
                                 .build()
                 )
         );

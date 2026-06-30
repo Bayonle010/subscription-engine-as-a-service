@@ -2,6 +2,8 @@ package com.markbay.subscription_engine.dunning.service.impl;
 
 import com.markbay.subscription_engine.billing.dto.BillingFeeResult;
 import com.markbay.subscription_engine.billing.service.BillingFeeService;
+import com.markbay.subscription_engine.customerportal.dto.PaymentRescueLinkResponse;
+import com.markbay.subscription_engine.customerportal.service.PaymentRescueService;
 import com.markbay.subscription_engine.dunning.config.DunningProperties;
 import com.markbay.subscription_engine.dunning.entity.DunningAttempt;
 import com.markbay.subscription_engine.dunning.entity.DunningCase;
@@ -64,6 +66,7 @@ public class DunningServiceImpl implements DunningService {
     private final LedgerPostingService ledgerPostingService;
     private final EventOutboxService eventOutboxService;
     private final NombaTokenizedCardChargeGateway tokenizedCardChargeGateway;
+    private final PaymentRescueService paymentRescueService;
 
     @Override
     @Transactional
@@ -111,6 +114,15 @@ public class DunningServiceImpl implements DunningService {
 
         DunningCase savedCase = dunningCaseRepository.save(dunningCase);
 
+        PaymentRescueLinkResponse rescueLink =
+                paymentRescueService.createPaymentRescueLink(
+                        subscription,
+                        invoice,
+                        savedCase
+                );
+
+
+
         scheduleDunningAttempt(savedCase, 1);
 
         recordPaymentFailedEvent(
@@ -118,7 +130,8 @@ public class DunningServiceImpl implements DunningService {
                 invoice,
                 failedAttempt,
                 billingReference,
-                failureReason
+                failureReason,
+                rescueLink.rescueUrl()
         );
 
         log.info(
@@ -409,12 +422,20 @@ public class DunningServiceImpl implements DunningService {
 
         scheduleDunningAttempt(dunningCase, nextAttemptNumber);
 
+        PaymentRescueLinkResponse rescueLink =
+                paymentRescueService.createPaymentRescueLink(
+                        dunningCase.getSubscription(),
+                        dunningCase.getInvoice(),
+                        dunningCase
+                );
+
         recordPaymentFailedEvent(
                 dunningCase.getSubscription(),
                 dunningCase.getInvoice(),
                 paymentAttempt,
                 paymentAttempt.getAttemptReference(),
-                failureReason
+                failureReason,
+                rescueLink.rescueUrl()
         );
 
         log.warn(
@@ -582,7 +603,8 @@ public class DunningServiceImpl implements DunningService {
             Invoice invoice,
             PaymentAttempt attempt,
             String billingReference,
-            String reason
+            String reason,
+            String paymentRescueUrl
     ) {
         if (attempt == null) {
             return;
@@ -608,6 +630,7 @@ public class DunningServiceImpl implements DunningService {
         payload.put("amount", attempt.getAmount().toPlainString());
         payload.put("currency", attempt.getCurrency());
         payload.put("reason", reason == null ? "Payment failed" : reason);
+        payload.put("paymentRescueUrl", safe(paymentRescueUrl));
 
         eventOutboxService.recordEvent(
                 CreateEventOutboxCommand.builder()

@@ -90,3 +90,7 @@ dunning:
   processor:
     fixed-delay-ms: 60000
     batch-size: 25
+
+customer-portal:
+  public-base-url: ${CUSTOMER_PORTAL_PUBLIC_BASE_URL:http://localhost:8083}
+  rescue-link-expiry-hours: 168
