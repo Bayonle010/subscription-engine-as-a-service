@@ -28,7 +28,7 @@ public class NombaCheckoutGateway {
     private final NombaRestClientErrorHandler nombaErrorHandler;
     private final ObjectMapper objectMapper;
 
-    public NombaCheckoutGateway(@Qualifier("nombaSubAccountRestClient")RestClient nombaRestClient,
+    public NombaCheckoutGateway(@Qualifier("nombaParentRestClient")RestClient nombaRestClient,
                                 NombaAuthService nombaAuthService, NombaRestClientErrorHandler nombaErrorHandler,
                                 ObjectMapper objectMapper) {
         this.nombaRestClient = nombaRestClient;
