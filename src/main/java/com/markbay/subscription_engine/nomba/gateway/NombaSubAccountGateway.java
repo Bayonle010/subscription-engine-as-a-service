@@ -29,7 +29,7 @@ public class NombaSubAccountGateway {
     private final NombaRestClientErrorHandler nombaErrorHandler;
 
     public NombaSubAccountGateway(
-            @Qualifier("nombaPayrentRestClient") RestClient nombaRestClient,
+            @Qualifier("nombaParentRestClient") RestClient nombaRestClient,
             NombaAuthService nombaAuthService,
             NombaRestClientErrorHandler nombaErrorHandler
     ) {
