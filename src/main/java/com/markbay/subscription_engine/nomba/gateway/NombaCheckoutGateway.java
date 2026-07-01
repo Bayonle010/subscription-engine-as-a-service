@@ -1,5 +1,6 @@
 package com.markbay.subscription_engine.nomba.gateway;
 
+import com.markbay.subscription_engine.nomba.dto.request.NombaCheckoutOrder;
 import com.markbay.subscription_engine.nomba.dto.request.NombaCreateCheckoutOrderRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaApiResponse;
 import com.markbay.subscription_engine.nomba.dto.response.NombaCheckoutOrderResult;
@@ -9,6 +10,7 @@ import com.markbay.subscription_engine.nomba.support.NombaRestClientErrorHandler
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.json.JsonParseException;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
@@ -27,8 +29,10 @@ public class NombaCheckoutGateway {
     private final NombaAuthService nombaAuthService;
     private final NombaRestClientErrorHandler nombaErrorHandler;
     private final ObjectMapper objectMapper;
+    @Value("${payment.nomba.subaccount-id}")
+    private String nombaSubAccountId;
 
-    public NombaCheckoutGateway(@Qualifier("nombaSubAccountRestClient")RestClient nombaRestClient,
+    public NombaCheckoutGateway(@Qualifier("nombaParentRestClient")RestClient nombaRestClient,
                                 NombaAuthService nombaAuthService, NombaRestClientErrorHandler nombaErrorHandler,
                                 ObjectMapper objectMapper) {
         this.nombaRestClient = nombaRestClient;
@@ -48,10 +52,13 @@ public class NombaCheckoutGateway {
                     request.order().currency()
             );
 
+            NombaCreateCheckoutOrderRequest requestWithSubAccount =
+                    withSubAccountId(request);
+
             NombaApiResponse<JsonNode> response = nombaRestClient.post()
                     .uri("/v1/checkout/order")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
-                    .body(request)
+                    .body(requestWithSubAccount)
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                     .body(new ParameterizedTypeReference<NombaApiResponse<JsonNode>>() {});
@@ -89,6 +96,34 @@ public class NombaCheckoutGateway {
 
             throw new NombaApiException("Nomba checkout order unexpected error", exception);
         }
+    }
+
+    private NombaCreateCheckoutOrderRequest withSubAccountId(
+            NombaCreateCheckoutOrderRequest request
+    ) {
+        if (request == null || request.order() == null) {
+            return request;
+        }
+
+        NombaCheckoutOrder order = request.order();
+
+        NombaCheckoutOrder orderWithSubAccount = new NombaCheckoutOrder(
+                order.amount(),
+                order.currency(),
+                order.orderReference(),
+                order.callbackUrl(),
+                order.customerEmail(),
+                order.customerId(),
+                nombaSubAccountId,
+                order.orderMetaData(),
+                order.allowedPaymentMethods()
+        );
+
+        return new NombaCreateCheckoutOrderRequest(
+                orderWithSubAccount,
+                request.tokenizeCard(),
+                request.meta()
+        );
     }
 
     private NombaCheckoutOrderResult parseCheckoutOrderResponse(
