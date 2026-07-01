@@ -1,6 +1,7 @@
 package com.markbay.subscription_engine.nomba.gateway;
 
 import com.markbay.subscription_engine.nomba.dto.request.NombaTokenizedCardChargeRequest;
+import com.markbay.subscription_engine.nomba.dto.request.NombaTokenizedCardOrder;
 import com.markbay.subscription_engine.nomba.dto.response.NombaApiResponse;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTokenizedCardChargeResult;
 import com.markbay.subscription_engine.nomba.exception.NombaApiException;
@@ -8,6 +9,7 @@ import com.markbay.subscription_engine.nomba.service.NombaAuthService;
 import com.markbay.subscription_engine.nomba.support.NombaRestClientErrorHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -26,9 +28,11 @@ public class RestClientNombaTokenizedCardChargeGateway
     private final NombaAuthService nombaAuthService;
     private final NombaRestClientErrorHandler nombaErrorHandler;
     private final ObjectMapper objectMapper;
+    @Value("${payment.nomba.subaccount-id}")
+    private String nombaSubAccountId;
 
     public RestClientNombaTokenizedCardChargeGateway(
-            @Qualifier("nombaSubAccountRestClient") RestClient nombaSubAccountRestClient,
+            @Qualifier("nombaParentRestClient") RestClient nombaSubAccountRestClient,
             NombaAuthService nombaAuthService,
             NombaRestClientErrorHandler nombaErrorHandler,
             ObjectMapper objectMapper
@@ -49,10 +53,13 @@ public class RestClientNombaTokenizedCardChargeGateway
                     request.order() != null ? request.order().orderReference() : null
             );
 
+            NombaTokenizedCardChargeRequest requestWithSubAccount =
+                    withSubAccountId(request);
+
             NombaApiResponse<JsonNode> response = nombaSubAccountRestClient.post()
                     .uri("/v1/checkout/tokenized-card-payment")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
-                    .body(request)
+                    .body(requestWithSubAccount)
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                     .body(new ParameterizedTypeReference<NombaApiResponse<JsonNode>>() {});
@@ -90,6 +97,31 @@ public class RestClientNombaTokenizedCardChargeGateway
 
             throw new NombaApiException("Nomba tokenized card charge unexpected error", exception);
         }
+    }
+
+    private NombaTokenizedCardChargeRequest withSubAccountId(
+            NombaTokenizedCardChargeRequest request
+    ) {
+        if (request == null || request.order() == null) {
+            return request;
+        }
+
+        NombaTokenizedCardOrder order = request.order();
+
+        NombaTokenizedCardOrder orderWithSubAccount = new NombaTokenizedCardOrder(
+                order.amount(),
+                order.currency(),
+                order.orderReference(),
+                order.customerEmail(),
+                order.customerId(),
+                order.callbackUrl(),
+                nombaSubAccountId
+        );
+
+        return new NombaTokenizedCardChargeRequest(
+                request.tokenKey(),
+                orderWithSubAccount
+        );
     }
 
     private NombaTokenizedCardChargeResult parseResponse(
