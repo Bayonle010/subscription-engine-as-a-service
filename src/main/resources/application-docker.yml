@@ -103,3 +103,9 @@ reconciliation:
   pending-expire-after-hours: 24
   retry-failed-webhooks: true
   failed-webhook-retry-age-minutes: 2
+
+
+subscription:
+  cancellation-processor:
+    fixed-delay-ms: 60000
+    batch-size: 25
