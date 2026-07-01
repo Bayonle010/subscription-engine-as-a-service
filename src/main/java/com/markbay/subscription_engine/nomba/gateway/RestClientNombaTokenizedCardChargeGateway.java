@@ -28,7 +28,7 @@ public class RestClientNombaTokenizedCardChargeGateway
     private final ObjectMapper objectMapper;
 
     public RestClientNombaTokenizedCardChargeGateway(
-            @Qualifier("nombaParentRestClient") RestClient nombaSubAccountRestClient,
+            @Qualifier("nombaSubAccountRestClient") RestClient nombaSubAccountRestClient,
             NombaAuthService nombaAuthService,
             NombaRestClientErrorHandler nombaErrorHandler,
             ObjectMapper objectMapper
