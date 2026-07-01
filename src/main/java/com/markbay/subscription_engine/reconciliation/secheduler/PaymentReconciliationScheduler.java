@@ -18,14 +18,14 @@ public class PaymentReconciliationScheduler {
     private final PaymentReconciliationProperties reconciliationProperties;
     private final PaymentReconciliationService reconciliationService;
 
-    @Scheduled(fixedDelayString = "${reconciliation.fixed-delay-ms:120000}")
-    public void runPaymentReconciliation() {
-        int batchSize = reconciliationProperties.getBatchSize();
-
-        reconcileSubscriptionCheckouts(batchSize);
-        reconcilePaymentRescueCheckouts(batchSize);
-        retryFailedWebhooks(batchSize);
-    }
+//    @Scheduled(fixedDelayString = "${reconciliation.fixed-delay-ms:120000}")
+//    public void runPaymentReconciliation() {
+//        int batchSize = reconciliationProperties.getBatchSize();
+//
+//        reconcileSubscriptionCheckouts(batchSize);
+//        reconcilePaymentRescueCheckouts(batchSize);
+//        retryFailedWebhooks(batchSize);
+//    }
 
     private void reconcileSubscriptionCheckouts(int batchSize) {
         List<UUID> sessionIds =
