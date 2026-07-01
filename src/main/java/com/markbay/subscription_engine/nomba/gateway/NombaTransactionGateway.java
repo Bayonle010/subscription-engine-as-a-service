@@ -29,7 +29,7 @@ public class NombaTransactionGateway {
     private final ObjectMapper objectMapper;
 
     public NombaTransactionGateway(
-            @Qualifier("nombaSubAccountRestClient") RestClient nombaRestClient,
+            @Qualifier("nombaParentRestClient") RestClient nombaRestClient,
             NombaAuthService nombaAuthService,
             NombaRestClientErrorHandler nombaErrorHandler,
             ObjectMapper objectMapper
