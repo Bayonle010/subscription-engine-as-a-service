@@ -118,7 +118,12 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
         String orderReference = paymentData.orderReference();
 
         if (!hasText(orderReference)) {
-            throw new IllegalStateException("Nomba webhook order reference is missing");
+            log.warn(
+                    "Payment success webhook ignored because order reference is missing. eventId={}",
+                    event.getId()
+            );
+
+            return;
         }
 
         var subscriptionCheckoutSession =
