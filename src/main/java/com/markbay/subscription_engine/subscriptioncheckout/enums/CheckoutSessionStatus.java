@@ -6,5 +6,6 @@ public enum CheckoutSessionStatus {
     COMPLETED,
     FAILED,
     CANCELLED,
-    EXPIRED
+    EXPIRED,
+    REQUIRES_MANUAL_REVIEW
 }

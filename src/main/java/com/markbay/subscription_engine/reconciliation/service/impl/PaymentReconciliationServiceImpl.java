@@ -157,8 +157,11 @@ public class PaymentReconciliationServiceImpl
                     );
 
             if (!hasText(paymentData.tokenKey())) {
+                checkoutSession.setStatus(CheckoutSessionStatus.REQUIRES_MANUAL_REVIEW);
+                checkoutSession.setFailedAt(Instant.now());
+
                 log.warn(
-                        "Subscription checkout payment was verified successfully, but tokenKey was not found in verification response. checkoutSessionId={}, orderReference={}",
+                        "Subscription checkout payment succeeded but cannot activate recurring subscription because tokenKey is missing. checkoutSessionId={}, orderReference={}",
                         checkoutSession.getId(),
                         orderReference
                 );

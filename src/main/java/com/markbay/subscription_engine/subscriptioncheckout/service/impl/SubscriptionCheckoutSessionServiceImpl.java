@@ -174,7 +174,7 @@ public class SubscriptionCheckoutSessionServiceImpl
                 session.getId().toString(),
                 null,
                 metadata,
-               null// List.of("Card")
+               List.of("Card")
         );
 
         return new NombaCreateCheckoutOrderRequest(
