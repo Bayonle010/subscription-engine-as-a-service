@@ -29,6 +29,7 @@ import com.markbay.subscription_engine.paymentmethod.enums.PaymentMethodType;
 import com.markbay.subscription_engine.plan.entity.Plan;
 import com.markbay.subscription_engine.plan.enums.BillingInterval;
 import com.markbay.subscription_engine.renewal.service.RenewalBillingService;
+import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutService;
 import com.markbay.subscription_engine.subscription.entity.Subscription;
 import com.markbay.subscription_engine.subscription.enums.SubscriptionStatus;
 import com.markbay.subscription_engine.subscription.repository.SubscriptionRepository;
@@ -60,6 +61,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     private final EventOutboxService eventOutboxService;
     private final NombaTokenizedCardChargeGateway tokenizedCardChargeGateway;
     private final DunningService dunningService;
+    private final RenewalCheckoutService renewalCheckoutService;
 
     @Override
     @Transactional(readOnly = true)
@@ -85,6 +87,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
             cancelAtPeriodEnd(subscription);
             return;
         }
+
 
         String billingReference = buildRenewalBillingReference(subscription);
 
@@ -113,6 +116,11 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         }
 
         Invoice invoice = getOrCreateRenewalInvoice(subscription, billingReference);
+
+        if (subscription.isPaymentMethodUpdateRequested()) {
+            handleRenewalWithPaymentMethodUpdateRequest(subscription, invoice);
+            return;
+        }
 
         PaymentAttempt attempt = createPaymentAttempt(
                 subscription,
@@ -442,6 +450,26 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         log.info(
                 "Subscription cancelled at period end. subscriptionId={}",
                 subscription.getId()
+        );
+    }
+
+    private void handleRenewalWithPaymentMethodUpdateRequest(
+            Subscription subscription,
+            Invoice invoice
+    ) {
+        subscription.setStatus(SubscriptionStatus.PAST_DUE);
+
+        renewalCheckoutService.createCheckoutForPaymentMethodUpdateRenewal(
+                subscription,
+                invoice
+        );
+
+        log.info(
+                "Skipped automatic renewal charge because payment method update was requested. tenantId={}, customerId={}, subscriptionId={}, invoiceId={}",
+                subscription.getTenant().getId(),
+                subscription.getCustomer().getId(),
+                subscription.getId(),
+                invoice.getId()
         );
     }
 

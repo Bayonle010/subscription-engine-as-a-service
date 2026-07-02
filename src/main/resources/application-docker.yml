@@ -109,3 +109,6 @@ subscription:
   cancellation-processor:
     fixed-delay-ms: 60000
     batch-size: 25
+
+renewal-checkout:
+  checkout-expiry-hours: 24

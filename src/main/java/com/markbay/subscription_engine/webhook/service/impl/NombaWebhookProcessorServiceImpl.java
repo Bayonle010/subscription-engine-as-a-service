@@ -7,6 +7,8 @@ import com.markbay.subscription_engine.nomba.dto.response.NombaVerifiedTransacti
 import com.markbay.subscription_engine.nomba.dto.response.NombaWebhookPaymentData;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransactionGateway;
 import com.markbay.subscription_engine.nomba.support.NombaWebhookPayloadExtractor;
+import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutCompletionService;
+import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutService;
 import com.markbay.subscription_engine.subscription.service.SubscriptionActivationService;
 import com.markbay.subscription_engine.subscriptioncheckout.entity.SubscriptionCheckoutSession;
 import com.markbay.subscription_engine.subscriptioncheckout.enums.CheckoutSessionStatus;
@@ -37,6 +39,10 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
     private final SubscriptionActivationService subscriptionActivationService;
     private final PaymentRescueCompletionService paymentRescueCompletionService;
     private final PaymentRescueCheckoutSessionRepository paymentRescueCheckoutSessionRepository;
+    private final com.markbay.subscription_engine.renewalcheckout.repository.RenewalCheckoutSessionRepository renewalCheckoutSessionRepository;
+    private final RenewalCheckoutCompletionService renewalCheckoutCompletionService;
+    private final RenewalCheckoutService renewalCheckoutService;
+
 
     @Override
     @Transactional
@@ -165,6 +171,22 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
                 event.getId(),
                 orderReference
         );
+
+        var renewalCheckoutSession =
+                renewalCheckoutSessionRepository.findByOrderReference(orderReference);
+
+        if (renewalCheckoutSession.isPresent()) {
+            NombaVerifiedTransactionResult verifiedTransaction =
+                    nombaTransactionGateway.verifyByOrderReference(orderReference);
+
+            renewalCheckoutCompletionService.completeSuccessfulRenewalCheckout(
+                    orderReference,
+                    verifiedTransaction,
+                    paymentData
+            );
+
+            return;
+        }
     }
 
     private void processPaymentFailed(InboundWebhookEvent event) {
@@ -232,6 +254,23 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
                 event.getId(),
                 orderReference
         );
+
+        var renewalCheckoutSession =
+                renewalCheckoutSessionRepository.findByOrderReference(orderReference);
+
+        if (renewalCheckoutSession.isPresent()) {
+            renewalCheckoutService.markRenewalCheckoutFailed(
+                    orderReference,
+                    "Renewal checkout failed"
+            );
+
+            log.info(
+                    "Renewal checkout marked as failed. orderReference={}",
+                    orderReference
+            );
+
+            return;
+        }
     }
 
     private boolean isAlreadyHandled(InboundWebhookEvent event) {

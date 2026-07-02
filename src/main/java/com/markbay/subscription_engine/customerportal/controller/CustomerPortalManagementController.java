@@ -2,12 +2,9 @@ package com.markbay.subscription_engine.customerportal.controller;
 
 import com.markbay.subscription_engine.common.response.ApiResponse;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
-import com.markbay.subscription_engine.customerportal.dto.CreateCustomerPortalManagementLinkRequest;
-import com.markbay.subscription_engine.customerportal.dto.CustomerPortalActionResponse;
-import com.markbay.subscription_engine.customerportal.dto.CustomerPortalInvoiceResponse;
-import com.markbay.subscription_engine.customerportal.dto.CustomerPortalManagementLinkResponse;
-import com.markbay.subscription_engine.customerportal.dto.CustomerPortalSubscriptionResponse;
+import com.markbay.subscription_engine.customerportal.dto.*;
 import com.markbay.subscription_engine.customerportal.service.CustomerPortalManagementService;
+import com.markbay.subscription_engine.customerportal.service.PaymentMethodUpdateRequestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +19,7 @@ import java.util.List;
 public class CustomerPortalManagementController {
 
     private final CustomerPortalManagementService customerPortalManagementService;
+    private final PaymentMethodUpdateRequestService paymentMethodUpdateRequestService;
 
     @PostMapping("/management-links")
     @PreAuthorize("hasAnyRole('OWNER','ADMIN','DEVELOPER','API_CLIENT')")
@@ -109,6 +107,36 @@ public class CustomerPortalManagementController {
         return ResponseEntity.ok(
                 ResponseUtil.success(
                         "Subscription cancellation resumed successfully",
+                        response
+                )
+        );
+    }
+
+    @PostMapping("/sessions/{token}/payment-method/update-request")
+    public ResponseEntity<ApiResponse<PaymentMethodUpdateRequestResponse>> requestPaymentMethodUpdate(
+            @PathVariable String token
+    ) {
+        PaymentMethodUpdateRequestResponse response =
+                paymentMethodUpdateRequestService.requestPaymentMethodUpdate(token);
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        "Payment method update requested successfully",
+                        response
+                )
+        );
+    }
+
+    @PostMapping("/sessions/{token}/payment-method/update-request/cancel")
+    public ResponseEntity<ApiResponse<PaymentMethodUpdateRequestResponse>> cancelPaymentMethodUpdateRequest(
+            @PathVariable String token
+    ) {
+        PaymentMethodUpdateRequestResponse response =
+                paymentMethodUpdateRequestService.cancelPaymentMethodUpdateRequest(token);
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        "Payment method update request cancelled successfully",
                         response
                 )
         );

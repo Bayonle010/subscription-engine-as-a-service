@@ -11,6 +11,10 @@ import com.markbay.subscription_engine.nomba.gateway.NombaTransactionGateway;
 import com.markbay.subscription_engine.reconciliation.config.PaymentReconciliationProperties;
 import com.markbay.subscription_engine.reconciliation.service.PaymentReconciliationService;
 import com.markbay.subscription_engine.reconciliation.support.ReconciliationPaymentDataFactory;
+import com.markbay.subscription_engine.renewalcheckout.entity.RenewalCheckoutSession;
+import com.markbay.subscription_engine.renewalcheckout.enums.RenewalCheckoutStatus;
+import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutCompletionService;
+import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutService;
 import com.markbay.subscription_engine.subscription.service.SubscriptionActivationService;
 import com.markbay.subscription_engine.subscriptioncheckout.entity.SubscriptionCheckoutSession;
 import com.markbay.subscription_engine.subscriptioncheckout.enums.CheckoutSessionStatus;
@@ -46,6 +50,9 @@ public class PaymentReconciliationServiceImpl
     private final PaymentRescueCompletionService paymentRescueCompletionService;
     private final NombaWebhookProcessorService nombaWebhookProcessorService;
     private final ReconciliationPaymentDataFactory paymentDataFactory;
+    private final com.markbay.subscription_engine.renewalcheckout.repository.RenewalCheckoutSessionRepository renewalCheckoutSessionRepository;
+    private final RenewalCheckoutCompletionService renewalCheckoutCompletionService;
+    private final RenewalCheckoutService renewalCheckoutService;
 
     @Override
     @Transactional(readOnly = true)
@@ -293,6 +300,113 @@ public class PaymentReconciliationServiceImpl
         log.info("Retrying failed inbound webhook event. eventId={}", eventId);
 
         nombaWebhookProcessorService.processWebhookEvent(eventId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UUID> findDueRenewalCheckoutSessionIds(int batchSize) {
+        Instant createdBefore = Instant.now().minus(
+                reconciliationProperties.getPendingMinAgeMinutes(),
+                ChronoUnit.MINUTES
+        );
+
+        return renewalCheckoutSessionRepository.findPendingSessionIdsForReconciliation(
+                RenewalCheckoutStatus.PAYMENT_PENDING,
+                createdBefore,
+                PageRequest.of(0, batchSize)
+        );
+    }
+
+
+    @Override
+    @Transactional
+    public void reconcileRenewalCheckoutSession(UUID sessionId) {
+        RenewalCheckoutSession session =
+                renewalCheckoutSessionRepository.findByIdForUpdate(sessionId)
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Renewal checkout session not found"
+                        ));
+
+        if (session.getStatus() == RenewalCheckoutStatus.COMPLETED) {
+            log.info(
+                    "Renewal checkout already completed. renewalCheckoutSessionId={}",
+                    session.getId()
+            );
+
+            return;
+        }
+
+        if (session.getStatus() != RenewalCheckoutStatus.PAYMENT_PENDING) {
+            log.info(
+                    "Skipping renewal checkout reconciliation because status is not PAYMENT_PENDING. renewalCheckoutSessionId={}, status={}",
+                    session.getId(),
+                    session.getStatus()
+            );
+
+            return;
+        }
+
+        if (shouldExpire(session.getCreatedAt(), session.getExpiresAt())) {
+            session.setStatus(RenewalCheckoutStatus.EXPIRED);
+
+            log.info(
+                    "Renewal checkout expired during reconciliation. renewalCheckoutSessionId={}, orderReference={}",
+                    session.getId(),
+                    session.getOrderReference()
+            );
+
+            return;
+        }
+
+        String orderReference = session.getOrderReference();
+
+        NombaVerifiedTransactionResult verifiedTransaction =
+                nombaTransactionGateway.verifyByOrderReference(orderReference);
+
+        if (verifiedTransaction.success()) {
+            NombaWebhookPaymentData paymentData =
+                    paymentDataFactory.fromVerifiedTransaction(
+                            orderReference,
+                            verifiedTransaction
+                    );
+
+            renewalCheckoutCompletionService.completeSuccessfulRenewalCheckout(
+                    orderReference,
+                    verifiedTransaction,
+                    paymentData
+            );
+
+            log.info(
+                    "Renewal checkout reconciled successfully. renewalCheckoutSessionId={}, orderReference={}",
+                    session.getId(),
+                    orderReference
+            );
+
+            return;
+        }
+
+        if (isTerminalFailure(verifiedTransaction.status())) {
+            renewalCheckoutService.markRenewalCheckoutFailed(
+                    orderReference,
+                    "Renewal checkout failed during reconciliation"
+            );
+
+            log.info(
+                    "Renewal checkout marked failed during reconciliation. renewalCheckoutSessionId={}, orderReference={}, providerStatus={}",
+                    session.getId(),
+                    orderReference,
+                    verifiedTransaction.status()
+            );
+
+            return;
+        }
+
+        log.info(
+                "Renewal checkout still pending after reconciliation. renewalCheckoutSessionId={}, orderReference={}, providerStatus={}",
+                session.getId(),
+                orderReference,
+                verifiedTransaction.status()
+        );
     }
 
     private boolean shouldExpire(
