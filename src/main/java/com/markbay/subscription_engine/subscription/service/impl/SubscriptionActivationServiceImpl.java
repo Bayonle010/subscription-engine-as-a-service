@@ -57,6 +57,7 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
             NombaWebhookPaymentData paymentData
     ) {
         validateCheckoutCanBeActivated(checkoutSession, verifiedTransaction);
+        validateRecurringPaymentData(paymentData);
 
         Customer customer = customerService.findOrCreateForCheckout(
                 checkoutSession.getTenant(),
@@ -113,6 +114,17 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
         );
 
         return savedSubscription;
+    }
+
+    private void validateRecurringPaymentData(
+            NombaWebhookPaymentData paymentData
+    ) {
+        if (paymentData == null || !hasText(paymentData.tokenKey())) {
+            throw new BadRequestException(
+                    "Subscription checkout was paid, but no tokenized card token was returned. " +
+                            "Automatic recurring subscriptions require card payment."
+            );
+        }
     }
 
     private void validateCheckoutCanBeActivated(
