@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 
 @Slf4j
@@ -162,9 +163,19 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
 
         return switch (interval) {
             case DAILY -> start.plus(count, ChronoUnit.DAYS);
-            case WEEKLY -> start.plus(count, ChronoUnit.WEEKS);
-            case MONTHLY -> start.plus(count, ChronoUnit.MONTHS);
-            case YEARLY -> start.plus(count, ChronoUnit.YEARS);
+
+            case WEEKLY -> start.plus(count * 7L, ChronoUnit.DAYS);
+
+            case MONTHLY -> start
+                    .atZone(ZoneOffset.UTC)
+                    .plusMonths(count)
+                    .toInstant();
+
+            case YEARLY -> start
+                    .atZone(ZoneOffset.UTC)
+                    .plusYears(count)
+                    .toInstant();
+
             case CUSTOM -> start.plus(count, ChronoUnit.DAYS);
         };
     }
