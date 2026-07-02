@@ -16,4 +16,8 @@ public interface PaymentReconciliationService {
     void reconcilePaymentRescueCheckoutSession(UUID sessionId);
 
     void retryFailedWebhookEvent(UUID eventId);
+
+    List<UUID> findDueRenewalCheckoutSessionIds(int batchSize);
+
+    void reconcileRenewalCheckoutSession(UUID sessionId);
 }

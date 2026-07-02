@@ -18,14 +18,15 @@ public class PaymentReconciliationScheduler {
     private final PaymentReconciliationProperties reconciliationProperties;
     private final PaymentReconciliationService reconciliationService;
 
-//    @Scheduled(fixedDelayString = "${reconciliation.fixed-delay-ms:120000}")
-//    public void runPaymentReconciliation() {
-//        int batchSize = reconciliationProperties.getBatchSize();
-//
-//        reconcileSubscriptionCheckouts(batchSize);
-//        reconcilePaymentRescueCheckouts(batchSize);
-//        retryFailedWebhooks(batchSize);
-//    }
+    @Scheduled(fixedDelayString = "${reconciliation.fixed-delay-ms:120000}")
+    public void runPaymentReconciliation() {
+        int batchSize = reconciliationProperties.getBatchSize();
+
+        reconcileSubscriptionCheckouts(batchSize);
+        reconcilePaymentRescueCheckouts(batchSize);
+        reconcileRenewalCheckouts(batchSize);
+        retryFailedWebhooks(batchSize);
+    }
 
     private void reconcileSubscriptionCheckouts(int batchSize) {
         List<UUID> sessionIds =
@@ -105,6 +106,33 @@ public class PaymentReconciliationScheduler {
                 log.error(
                         "Failed inbound webhook retry failed. eventId={}, reason={}",
                         eventId,
+                        exception.getMessage(),
+                        exception
+                );
+            }
+        }
+    }
+
+    private void reconcileRenewalCheckouts(int batchSize) {
+        List<UUID> sessionIds =
+                reconciliationService.findDueRenewalCheckoutSessionIds(batchSize);
+
+        if (sessionIds.isEmpty()) {
+            return;
+        }
+
+        log.info(
+                "Reconciling pending renewal checkout sessions. count={}",
+                sessionIds.size()
+        );
+
+        for (UUID sessionId : sessionIds) {
+            try {
+                reconciliationService.reconcileRenewalCheckoutSession(sessionId);
+            } catch (Exception exception) {
+                log.error(
+                        "Renewal checkout reconciliation failed. sessionId={}, reason={}",
+                        sessionId,
                         exception.getMessage(),
                         exception
                 );

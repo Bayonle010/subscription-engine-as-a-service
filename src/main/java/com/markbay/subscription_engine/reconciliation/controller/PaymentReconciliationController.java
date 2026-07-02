@@ -61,4 +61,19 @@ public class PaymentReconciliationController {
                 )
         );
     }
+
+    @PostMapping("/renewal-checkouts/{sessionId}")
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN','DEVELOPER')")
+    public ResponseEntity<ApiResponse<Void>> reconcileRenewalCheckout(
+            @PathVariable UUID sessionId
+    ) {
+        reconciliationService.reconcileRenewalCheckoutSession(sessionId);
+
+        return ResponseEntity.ok(
+                ResponseUtil.success(
+                        "Renewal checkout reconciliation completed",
+                        null
+                )
+        );
+    }
 }

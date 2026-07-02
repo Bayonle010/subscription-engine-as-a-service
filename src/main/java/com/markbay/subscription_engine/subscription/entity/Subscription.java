@@ -100,6 +100,15 @@ public class Subscription {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "payment_method_update_requested", nullable = false)
+    private boolean paymentMethodUpdateRequested;
+
+    @Column(name = "payment_method_update_requested_at")
+    private Instant paymentMethodUpdateRequestedAt;
+
+    @Column(name = "payment_method_update_fulfilled_at")
+    private Instant paymentMethodUpdateFulfilledAt;
+
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();

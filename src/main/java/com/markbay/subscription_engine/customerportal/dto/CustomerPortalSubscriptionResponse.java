@@ -23,6 +23,9 @@ public record CustomerPortalSubscriptionResponse(
         BigDecimal amount,
         String currency,
         boolean cancelAtPeriodEnd,
+        boolean paymentMethodUpdateRequested,
+        Instant paymentMethodUpdateRequestedAt,
+        Instant paymentMethodUpdateFulfilledAt,
         Instant currentPeriodStart,
         Instant currentPeriodEnd,
         Instant cancelledAt,
@@ -50,6 +53,9 @@ public record CustomerPortalSubscriptionResponse(
                 subscription.getAmount(),
                 subscription.getCurrency(),
                 subscription.isCancelAtPeriodEnd(),
+                subscription.isPaymentMethodUpdateRequested(),
+                subscription.getPaymentMethodUpdateRequestedAt(),
+                subscription.getPaymentMethodUpdateFulfilledAt(),
                 subscription.getCurrentPeriodStart(),
                 subscription.getCurrentPeriodEnd(),
                 subscription.getCancelledAt(),
@@ -63,6 +69,7 @@ public record CustomerPortalSubscriptionResponse(
 
         if (subscription.getStatus() == SubscriptionStatus.ACTIVE
                 || subscription.getStatus() == SubscriptionStatus.TRIALING) {
+
             if (subscription.isCancelAtPeriodEnd()) {
                 actions.add("RESUME_CANCELLATION");
             } else {
@@ -70,6 +77,12 @@ public record CustomerPortalSubscriptionResponse(
             }
 
             actions.add("CANCEL_NOW");
+
+            if (subscription.isPaymentMethodUpdateRequested()) {
+                actions.add("CANCEL_PAYMENT_METHOD_UPDATE_REQUEST");
+            } else {
+                actions.add("REQUEST_PAYMENT_METHOD_UPDATE");
+            }
         }
 
         if (subscription.getStatus() == SubscriptionStatus.PAST_DUE) {
