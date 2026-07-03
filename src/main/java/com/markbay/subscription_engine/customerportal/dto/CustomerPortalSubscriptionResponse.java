@@ -70,6 +70,10 @@ public record CustomerPortalSubscriptionResponse(
         if (subscription.getStatus() == SubscriptionStatus.ACTIVE
                 || subscription.getStatus() == SubscriptionStatus.TRIALING) {
 
+            if (!subscription.isCancelAtPeriodEnd()) {
+                actions.add("CHANGE_PLAN");
+            }
+
             if (subscription.isCancelAtPeriodEnd()) {
                 actions.add("RESUME_CANCELLATION");
             } else {
@@ -83,6 +87,8 @@ public record CustomerPortalSubscriptionResponse(
             } else {
                 actions.add("REQUEST_PAYMENT_METHOD_UPDATE");
             }
+
+
         }
 
         if (subscription.getStatus() == SubscriptionStatus.PAST_DUE) {
