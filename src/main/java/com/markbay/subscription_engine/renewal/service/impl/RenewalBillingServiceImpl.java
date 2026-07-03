@@ -42,6 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -621,12 +623,14 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         int count = resolveBillingIntervalCount(plan);
         BillingInterval interval = plan.getBillingInterval();
 
+        ZonedDateTime zonedStart = start.atZone(ZoneOffset.UTC);
+
         return switch (interval) {
-            case DAILY -> start.plus(count, ChronoUnit.DAYS);
-            case WEEKLY -> start.plus(count, ChronoUnit.WEEKS);
-            case MONTHLY -> start.plus(count, ChronoUnit.MONTHS);
-            case YEARLY -> start.plus(count, ChronoUnit.YEARS);
-            case CUSTOM -> start.plus(count, ChronoUnit.DAYS);
+            case DAILY -> zonedStart.plusDays(count).toInstant();
+            case WEEKLY -> zonedStart.plusWeeks(count).toInstant();
+            case MONTHLY -> zonedStart.plusMonths(count).toInstant();
+            case YEARLY -> zonedStart.plusYears(count).toInstant();
+            case CUSTOM -> zonedStart.plusDays(count).toInstant();
         };
     }
 
