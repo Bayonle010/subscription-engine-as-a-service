@@ -19,4 +19,10 @@ public interface LedgerPostingService {
             BillingFeeResult feeResult
     );
 
+    LedgerPostingResult postProrationPayment(
+            Subscription subscription,
+            Payment payment,
+            BillingFeeResult feeResult
+    );
+
 }

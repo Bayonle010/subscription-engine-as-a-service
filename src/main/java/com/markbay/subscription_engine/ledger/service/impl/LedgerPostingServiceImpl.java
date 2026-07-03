@@ -205,6 +205,23 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
                 ));
     }
 
+    @Override
+    @Transactional
+    public LedgerPostingResult postProrationPayment(
+            Subscription subscription,
+            Payment payment,
+            BillingFeeResult feeResult
+    ) {
+        return postSubscriptionPayment(
+                subscription,
+                payment,
+                feeResult,
+                "PRORATION",
+                "Proration payment for plan switch",
+                "PRORATION_PAYMENT:"
+        );
+    }
+
     private LedgerPostingResult postSubscriptionPayment(
             Subscription subscription,
             Payment payment,
@@ -343,6 +360,8 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
                 currency
         );
     }
+
+
 
     private String buildTransactionRef(
             Payment payment,

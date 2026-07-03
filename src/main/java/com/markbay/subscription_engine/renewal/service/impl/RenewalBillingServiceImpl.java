@@ -28,6 +28,7 @@ import com.markbay.subscription_engine.paymentmethod.enums.PaymentAuthorizationS
 import com.markbay.subscription_engine.paymentmethod.enums.PaymentMethodType;
 import com.markbay.subscription_engine.plan.entity.Plan;
 import com.markbay.subscription_engine.plan.enums.BillingInterval;
+import com.markbay.subscription_engine.planswitch.service.PlanSwitchService;
 import com.markbay.subscription_engine.renewal.service.RenewalBillingService;
 import com.markbay.subscription_engine.renewalcheckout.service.RenewalCheckoutService;
 import com.markbay.subscription_engine.subscription.entity.Subscription;
@@ -62,6 +63,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     private final NombaTokenizedCardChargeGateway tokenizedCardChargeGateway;
     private final DunningService dunningService;
     private final RenewalCheckoutService renewalCheckoutService;
+    private final PlanSwitchService planSwitchService;
 
     @Override
     @Transactional(readOnly = true)
@@ -78,6 +80,11 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     public void processSubscriptionRenewal(UUID subscriptionId) {
         Subscription subscription = subscriptionRepository.findByIdForRenewalUpdate(subscriptionId)
                 .orElseThrow(() -> new IllegalArgumentException("Subscription not found"));
+
+        planSwitchService.applyDueScheduledPlanSwitchForSubscription(
+                subscription.getId()
+        );
+
 
         if (!isDueForRenewal(subscription)) {
             return;

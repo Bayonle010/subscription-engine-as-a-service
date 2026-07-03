@@ -110,3 +110,8 @@ subscription:
 
 renewal-checkout:
   checkout-expiry-hours: 24
+
+plan-switch:
+  processor:
+    fixed-delay-ms: 60000
+    batch-size: 25
