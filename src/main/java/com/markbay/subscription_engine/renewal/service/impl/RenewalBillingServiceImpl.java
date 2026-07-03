@@ -643,10 +643,10 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     }
 
     private String buildRenewalBillingReference(Subscription subscription) {
-        return "renewal:"
-                + subscription.getId()
-                + ":"
-                + subscription.getCurrentPeriodEnd().getEpochSecond();
+        return "ren_"
+                + subscription.getId().toString().replace("-", "").substring(0, 20)
+                + "_"
+                + Long.toString(subscription.getCurrentPeriodEnd().getEpochSecond(), 36);
     }
 
     private String generateInvoiceNumber() {
