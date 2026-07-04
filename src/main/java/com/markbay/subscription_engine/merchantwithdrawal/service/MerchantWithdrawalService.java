@@ -1,7 +1,6 @@
 package com.markbay.subscription_engine.merchantwithdrawal.service;
 
-import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateBankMerchantWithdrawalRequest;
-import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateNombaWalletMerchantWithdrawalRequest;
+import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateMerchantWithdrawalRequest;
 import com.markbay.subscription_engine.merchantwithdrawal.dto.MerchantWithdrawalResponse;
 
 import java.util.List;
@@ -9,14 +8,9 @@ import java.util.UUID;
 
 public interface MerchantWithdrawalService {
 
-    MerchantWithdrawalResponse requestBankWithdrawal(
+    MerchantWithdrawalResponse requestWithdrawal(
             String idempotencyKey,
-            CreateBankMerchantWithdrawalRequest request
-    );
-
-    MerchantWithdrawalResponse requestNombaWalletWithdrawal(
-            String idempotencyKey,
-            CreateNombaWalletMerchantWithdrawalRequest request
+            CreateMerchantWithdrawalRequest request
     );
 
     List<MerchantWithdrawalResponse> listWithdrawals();
@@ -25,7 +19,7 @@ public interface MerchantWithdrawalService {
             UUID withdrawalId
     );
 
-    void dispatchWithdrawal(
+    MerchantWithdrawalResponse retryWithdrawal(
             UUID withdrawalId
     );
 }

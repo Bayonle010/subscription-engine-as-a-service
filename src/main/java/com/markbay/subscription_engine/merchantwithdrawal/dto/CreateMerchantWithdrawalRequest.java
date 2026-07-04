@@ -7,7 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-public record CreateBankMerchantWithdrawalRequest(
+public record CreateMerchantWithdrawalRequest(
         @NotNull(message = "Payout account ID is required")
         UUID payoutAccountId,
 

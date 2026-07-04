@@ -5,8 +5,7 @@ import com.markbay.subscription_engine.common.exception.ConflictException;
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
 import com.markbay.subscription_engine.ledger.dto.LedgerPostingResult;
 import com.markbay.subscription_engine.ledger.service.LedgerPostingService;
-import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateBankMerchantWithdrawalRequest;
-import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateNombaWalletMerchantWithdrawalRequest;
+import com.markbay.subscription_engine.merchantwithdrawal.dto.CreateMerchantWithdrawalRequest;
 import com.markbay.subscription_engine.merchantwithdrawal.dto.MerchantWithdrawalResponse;
 import com.markbay.subscription_engine.merchantwithdrawal.entity.MerchantWithdrawal;
 import com.markbay.subscription_engine.merchantwithdrawal.enums.MerchantWithdrawalProvider;
@@ -23,6 +22,7 @@ import com.markbay.subscription_engine.payoutaccount.enums.PayoutDestinationType
 import com.markbay.subscription_engine.payoutaccount.repository.MerchantPayoutAccountRepository;
 import com.markbay.subscription_engine.security.AuthenticatedTenantProvider;
 import com.markbay.subscription_engine.tenant.entity.Tenant;
+import com.markbay.subscription_engine.tenant.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -60,6 +60,7 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
     );
 
     private final AuthenticatedTenantProvider authenticatedTenantProvider;
+    private final TenantRepository tenantRepository;
     private final MerchantPayoutAccountRepository payoutAccountRepository;
     private final MerchantWithdrawalRepository withdrawalRepository;
     private final LedgerPostingService ledgerPostingService;
@@ -67,38 +68,17 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
     private final PlatformTransactionManager transactionManager;
 
     @Override
-    public MerchantWithdrawalResponse requestBankWithdrawal(
+    public MerchantWithdrawalResponse requestWithdrawal(
             String idempotencyKey,
-            CreateBankMerchantWithdrawalRequest request
+            CreateMerchantWithdrawalRequest request
     ) {
-        Tenant tenant = authenticatedTenantProvider.getCurrentTenant();
+        Tenant tenant = getCurrentTenant();
 
         validateTenantIsActive(tenant);
         validateIdempotencyKey(idempotencyKey);
 
         BigDecimal amount = normalizeAmount(request.amount());
         String currency = normalizeCurrency(request.currency());
-
-        String requestHash = hashRequest(
-                "BANK_ACCOUNT",
-                request.payoutAccountId().toString(),
-                amount.toPlainString(),
-                currency,
-                safe(request.narration())
-        );
-
-        Optional<MerchantWithdrawal> existingWithdrawal =
-                withdrawalRepository.findByTenant_IdAndIdempotencyKey(
-                        tenant.getId(),
-                        idempotencyKey
-                );
-
-        if (existingWithdrawal.isPresent()) {
-            return handleExistingIdempotentWithdrawal(
-                    existingWithdrawal.get(),
-                    requestHash
-            );
-        }
 
         MerchantPayoutAccount payoutAccount =
                 payoutAccountRepository.findByIdAndTenant_Id(
@@ -109,61 +89,11 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
                                 "Payout account not found"
                         ));
 
-        validateBankPayoutAccount(payoutAccount);
-
-        MerchantWithdrawal withdrawal =
-                MerchantWithdrawal.builder()
-                        .tenant(tenant)
-                        .payoutAccount(payoutAccount)
-                        .destinationType(PayoutDestinationType.BANK_ACCOUNT)
-                        .status(MerchantWithdrawalStatus.HELD)
-                        .provider(MerchantWithdrawalProvider.NOMBA)
-                        .amount(amount)
-                        .currency(currency)
-                        .bankCode(payoutAccount.getBankCode())
-                        .bankName(payoutAccount.getBankName())
-                        .accountNumber(payoutAccount.getAccountNumber())
-                        .accountName(payoutAccount.getAccountName())
-                        .narration(resolveNarration(request.narration()))
-                        .idempotencyKey(idempotencyKey)
-                        .requestHash(requestHash)
-                        .merchantTxRef(buildMerchantTxRef())
-                        .heldAt(Instant.now())
-                        .nextAttemptAt(Instant.now())
-                        .build();
-
-        MerchantWithdrawal savedWithdrawal =
-                createWithdrawalAndHoldFunds(withdrawal);
-
-        log.info(
-                "Merchant bank withdrawal requested and funds held. tenantId={}, withdrawalId={}, amount={}, currency={}, merchantTxRef={}",
-                tenant.getId(),
-                savedWithdrawal.getId(),
-                savedWithdrawal.getAmount(),
-                savedWithdrawal.getCurrency(),
-                savedWithdrawal.getMerchantTxRef()
-        );
-
-        return MerchantWithdrawalResponse.from(savedWithdrawal);
-    }
-
-    @Override
-    public MerchantWithdrawalResponse requestNombaWalletWithdrawal(
-            String idempotencyKey,
-            CreateNombaWalletMerchantWithdrawalRequest request
-    ) {
-        Tenant tenant = authenticatedTenantProvider.getCurrentTenant();
-
-        validateTenantIsActive(tenant);
-        validateIdempotencyKey(idempotencyKey);
-        validateReceiverAccountId(request.receiverAccountId());
-
-        BigDecimal amount = normalizeAmount(request.amount());
-        String currency = normalizeCurrency(request.currency());
+        validatePayoutAccount(payoutAccount);
 
         String requestHash = hashRequest(
-                "NOMBA_WALLET",
-                request.receiverAccountId(),
+                payoutAccount.getDestinationType().name(),
+                payoutAccount.getId().toString(),
                 amount.toPlainString(),
                 currency,
                 safe(request.narration())
@@ -176,47 +106,57 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
                 );
 
         if (existingWithdrawal.isPresent()) {
-            return handleExistingIdempotentWithdrawal(
-                    existingWithdrawal.get(),
-                    requestHash
-            );
+            MerchantWithdrawal existing = existingWithdrawal.get();
+
+            if (!existing.getRequestHash().equals(requestHash)) {
+                throw new ConflictException(
+                        "Idempotency key has already been used for a different withdrawal request"
+                );
+            }
+
+            if (existing.getStatus() == MerchantWithdrawalStatus.HELD) {
+                return dispatchWithdrawalAndReturn(
+                        existing.getId(),
+                        tenant.getId()
+                );
+            }
+
+            return MerchantWithdrawalResponse.from(existing);
         }
 
         MerchantWithdrawal withdrawal =
-                MerchantWithdrawal.builder()
-                        .tenant(tenant)
-                        .destinationType(PayoutDestinationType.NOMBA_WALLET)
-                        .status(MerchantWithdrawalStatus.HELD)
-                        .provider(MerchantWithdrawalProvider.NOMBA)
-                        .amount(amount)
-                        .currency(currency)
-                        .receiverAccountId(request.receiverAccountId().trim())
-                        .narration(resolveNarration(request.narration()))
-                        .idempotencyKey(idempotencyKey)
-                        .requestHash(requestHash)
-                        .merchantTxRef(buildMerchantTxRef())
-                        .heldAt(Instant.now())
-                        .nextAttemptAt(Instant.now())
-                        .build();
+                buildWithdrawal(
+                        tenant,
+                        payoutAccount,
+                        amount,
+                        currency,
+                        request.narration(),
+                        idempotencyKey,
+                        requestHash
+                );
 
         MerchantWithdrawal savedWithdrawal =
                 createWithdrawalAndHoldFunds(withdrawal);
 
         log.info(
-                "Merchant Nomba wallet withdrawal requested and funds held. tenantId={}, withdrawalId={}, amount={}, currency={}, merchantTxRef={}",
+                "Merchant withdrawal requested and funds held. tenantId={}, withdrawalId={}, destinationType={}, amount={}, currency={}, merchantTxRef={}",
                 tenant.getId(),
                 savedWithdrawal.getId(),
+                savedWithdrawal.getDestinationType(),
                 savedWithdrawal.getAmount(),
                 savedWithdrawal.getCurrency(),
                 savedWithdrawal.getMerchantTxRef()
         );
 
-        return MerchantWithdrawalResponse.from(savedWithdrawal);
+        return dispatchWithdrawalAndReturn(
+                savedWithdrawal.getId(),
+                tenant.getId()
+        );
     }
 
     @Override
     public List<MerchantWithdrawalResponse> listWithdrawals() {
-        Tenant tenant = authenticatedTenantProvider.getCurrentTenant();
+        Tenant tenant = getCurrentTenant();
 
         return withdrawalRepository
                 .findAllByTenant_IdOrderByCreatedAtDesc(tenant.getId())
@@ -227,7 +167,7 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
 
     @Override
     public MerchantWithdrawalResponse getWithdrawal(UUID withdrawalId) {
-        Tenant tenant = authenticatedTenantProvider.getCurrentTenant();
+        Tenant tenant = getCurrentTenant();
 
         MerchantWithdrawal withdrawal =
                 withdrawalRepository.findByIdAndTenant_Id(
@@ -242,44 +182,67 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
     }
 
     @Override
-    public void dispatchWithdrawal(UUID withdrawalId) {
-        TransactionTemplate transactionTemplate =
-                new TransactionTemplate(transactionManager);
+    public MerchantWithdrawalResponse retryWithdrawal(UUID withdrawalId) {
+        Tenant tenant = getCurrentTenant();
 
         MerchantWithdrawal withdrawal =
-                transactionTemplate.execute(status ->
-                        markWithdrawalAsDispatching(withdrawalId)
-                );
+                withdrawalRepository.findByIdAndTenant_Id(
+                                withdrawalId,
+                                tenant.getId()
+                        )
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Merchant withdrawal not found"
+                        ));
 
-        if (withdrawal == null) {
-            return;
+        if (withdrawal.getStatus() == MerchantWithdrawalStatus.SUCCEEDED
+                || withdrawal.getStatus() == MerchantWithdrawalStatus.REVERSED
+                || withdrawal.getStatus() == MerchantWithdrawalStatus.FAILED) {
+            return MerchantWithdrawalResponse.from(withdrawal);
         }
 
-        try {
-            NombaTransferResult transferResult =
-                    callNombaTransfer(withdrawal);
+        return dispatchWithdrawalAndReturn(
+                withdrawal.getId(),
+                tenant.getId()
+        );
+    }
 
-            transactionTemplate.executeWithoutResult(status ->
-                    recordDispatchResult(
-                            withdrawalId,
-                            transferResult
-                    )
-            );
-        } catch (Exception exception) {
-            log.error(
-                    "Nomba withdrawal dispatch call failed. withdrawalId={}, reason={}",
-                    withdrawalId,
-                    exception.getMessage(),
-                    exception
-            );
+    private MerchantWithdrawal buildWithdrawal(
+            Tenant tenant,
+            MerchantPayoutAccount payoutAccount,
+            BigDecimal amount,
+            String currency,
+            String narration,
+            String idempotencyKey,
+            String requestHash
+    ) {
+        MerchantWithdrawal.MerchantWithdrawalBuilder builder =
+                MerchantWithdrawal.builder()
+                        .tenant(tenant)
+                        .payoutAccount(payoutAccount)
+                        .destinationType(payoutAccount.getDestinationType())
+                        .status(MerchantWithdrawalStatus.HELD)
+                        .provider(MerchantWithdrawalProvider.NOMBA)
+                        .amount(amount)
+                        .currency(currency)
+                        .narration(resolveNarration(narration))
+                        .idempotencyKey(idempotencyKey)
+                        .requestHash(requestHash)
+                        .merchantTxRef(buildMerchantTxRef())
+                        .heldAt(Instant.now())
+                        .nextAttemptAt(null);
 
-            transactionTemplate.executeWithoutResult(status ->
-                    recordDispatchException(
-                            withdrawalId,
-                            exception
-                    )
-            );
+        if (payoutAccount.getDestinationType() == PayoutDestinationType.BANK_ACCOUNT) {
+            builder.bankCode(payoutAccount.getBankCode())
+                    .bankName(payoutAccount.getBankName())
+                    .accountNumber(payoutAccount.getAccountNumber())
+                    .accountName(payoutAccount.getAccountName());
         }
+
+        if (payoutAccount.getDestinationType() == PayoutDestinationType.NOMBA_WALLET) {
+            builder.receiverAccountId(payoutAccount.getReceiverAccountId());
+        }
+
+        return builder.build();
     }
 
     private MerchantWithdrawal createWithdrawalAndHoldFunds(
@@ -308,25 +271,75 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         });
     }
 
-    private MerchantWithdrawalResponse handleExistingIdempotentWithdrawal(
-            MerchantWithdrawal existingWithdrawal,
-            String requestHash
+    private MerchantWithdrawalResponse dispatchWithdrawalAndReturn(
+            UUID withdrawalId,
+            UUID tenantId
     ) {
-        if (!existingWithdrawal.getRequestHash().equals(requestHash)) {
-            throw new ConflictException(
-                    "Idempotency key has already been used for a different withdrawal request"
+        TransactionTemplate transactionTemplate =
+                new TransactionTemplate(transactionManager);
+
+        MerchantWithdrawal withdrawal =
+                transactionTemplate.execute(status ->
+                        markWithdrawalAsDispatching(
+                                withdrawalId,
+                                tenantId
+                        )
+                );
+
+        if (withdrawal == null) {
+            return getWithdrawalForTenant(
+                    withdrawalId,
+                    tenantId
             );
         }
 
-        return MerchantWithdrawalResponse.from(existingWithdrawal);
+        try {
+            NombaTransferResult transferResult =
+                    callNombaTransfer(withdrawal);
+
+            transactionTemplate.executeWithoutResult(status ->
+                    recordDispatchResult(
+                            withdrawalId,
+                            tenantId,
+                            transferResult
+                    )
+            );
+        } catch (Exception exception) {
+            log.error(
+                    "Nomba withdrawal dispatch call failed. withdrawalId={}, reason={}",
+                    withdrawalId,
+                    exception.getMessage(),
+                    exception
+            );
+
+            transactionTemplate.executeWithoutResult(status ->
+                    recordDispatchException(
+                            withdrawalId,
+                            tenantId,
+                            exception
+                    )
+            );
+        }
+
+        return getWithdrawalForTenant(
+                withdrawalId,
+                tenantId
+        );
     }
 
-    private MerchantWithdrawal markWithdrawalAsDispatching(UUID withdrawalId) {
+    private MerchantWithdrawal markWithdrawalAsDispatching(
+            UUID withdrawalId,
+            UUID tenantId
+    ) {
         MerchantWithdrawal withdrawal =
                 withdrawalRepository.findByIdForUpdate(withdrawalId)
                         .orElseThrow(() -> new ResourceNotFoundException(
                                 "Merchant withdrawal not found"
                         ));
+
+        if (!withdrawal.getTenant().getId().equals(tenantId)) {
+            throw new ResourceNotFoundException("Merchant withdrawal not found");
+        }
 
         if (withdrawal.getStatus() == MerchantWithdrawalStatus.SUCCEEDED
                 || withdrawal.getStatus() == MerchantWithdrawalStatus.REVERSED
@@ -339,12 +352,10 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             return null;
         }
 
-        if (withdrawal.getStatus() != MerchantWithdrawalStatus.HELD
-                && withdrawal.getStatus() != MerchantWithdrawalStatus.PROCESSING) {
+        if (withdrawal.getStatus() == MerchantWithdrawalStatus.DISPATCHING) {
             log.info(
-                    "Skipping withdrawal dispatch because withdrawal is not dispatchable. withdrawalId={}, status={}",
-                    withdrawal.getId(),
-                    withdrawal.getStatus()
+                    "Skipping withdrawal dispatch because withdrawal is already dispatching. withdrawalId={}",
+                    withdrawal.getId()
             );
             return null;
         }
@@ -353,13 +364,6 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
             withdrawal.setFailureReason("Maximum dispatch attempts reached");
             withdrawal.setNextAttemptAt(null);
-
-            log.warn(
-                    "Withdrawal moved to manual review after max attempts. withdrawalId={}, attempts={}",
-                    withdrawal.getId(),
-                    withdrawal.getAttemptCount()
-            );
-
             return null;
         }
 
@@ -404,6 +408,7 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
 
     private void recordDispatchResult(
             UUID withdrawalId,
+            UUID tenantId,
             NombaTransferResult result
     ) {
         MerchantWithdrawal withdrawal =
@@ -412,6 +417,10 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
                                 "Merchant withdrawal not found"
                         ));
 
+        if (!withdrawal.getTenant().getId().equals(tenantId)) {
+            throw new ResourceNotFoundException("Merchant withdrawal not found");
+        }
+
         if (withdrawal.getStatus() == MerchantWithdrawalStatus.SUCCEEDED
                 || withdrawal.getStatus() == MerchantWithdrawalStatus.REVERSED
                 || withdrawal.getStatus() == MerchantWithdrawalStatus.FAILED) {
@@ -419,9 +428,9 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         }
 
         if (result == null) {
-            withdrawal.setStatus(MerchantWithdrawalStatus.PROCESSING);
+            withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
             withdrawal.setFailureReason("Nomba transfer response was empty");
-            withdrawal.setNextAttemptAt(nextAttemptAt(withdrawal));
+            withdrawal.setNextAttemptAt(null);
             return;
         }
 
@@ -440,7 +449,7 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         if (result.pending() || result.accepted()) {
             withdrawal.setStatus(MerchantWithdrawalStatus.PROCESSING);
             withdrawal.setFailureReason(null);
-            withdrawal.setNextAttemptAt(nextAttemptAt(withdrawal));
+            withdrawal.setNextAttemptAt(null);
 
             log.info(
                     "Merchant withdrawal is processing at Nomba. withdrawalId={}, merchantTxRef={}, providerStatus={}",
@@ -463,17 +472,11 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
         withdrawal.setFailureReason("Unexpected Nomba transfer response");
         withdrawal.setNextAttemptAt(null);
-
-        log.warn(
-                "Merchant withdrawal moved to manual review due to unexpected provider response. withdrawalId={}, merchantTxRef={}, providerStatus={}",
-                withdrawal.getId(),
-                withdrawal.getMerchantTxRef(),
-                result.status()
-        );
     }
 
     private void recordDispatchException(
             UUID withdrawalId,
+            UUID tenantId,
             Exception exception
     ) {
         MerchantWithdrawal withdrawal =
@@ -482,25 +485,28 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
                                 "Merchant withdrawal not found"
                         ));
 
+        if (!withdrawal.getTenant().getId().equals(tenantId)) {
+            throw new ResourceNotFoundException("Merchant withdrawal not found");
+        }
+
         if (withdrawal.getStatus() == MerchantWithdrawalStatus.SUCCEEDED
                 || withdrawal.getStatus() == MerchantWithdrawalStatus.REVERSED
                 || withdrawal.getStatus() == MerchantWithdrawalStatus.FAILED) {
             return;
         }
 
-        if (withdrawal.getAttemptCount() >= withdrawal.getMaxAttempts()) {
-            withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
-            withdrawal.setFailureReason(
-                    "Maximum dispatch attempts reached. Last error: "
-                            + exception.getMessage()
-            );
-            withdrawal.setNextAttemptAt(null);
-            return;
-        }
-
         withdrawal.setStatus(MerchantWithdrawalStatus.PROCESSING);
-        withdrawal.setFailureReason(exception.getMessage());
-        withdrawal.setNextAttemptAt(nextAttemptAt(withdrawal));
+        withdrawal.setFailureReason(
+                "Nomba transfer call failed or returned unknown result: "
+                        + exception.getMessage()
+        );
+        withdrawal.setNextAttemptAt(null);
+
+        log.warn(
+                "Merchant withdrawal left in PROCESSING after dispatch exception. withdrawalId={}, merchantTxRef={}",
+                withdrawal.getId(),
+                withdrawal.getMerchantTxRef()
+        );
     }
 
     private void settleSuccessfulWithdrawal(
@@ -564,22 +570,65 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         );
     }
 
-    private void validateBankPayoutAccount(
+    private MerchantWithdrawalResponse getWithdrawalForTenant(
+            UUID withdrawalId,
+            UUID tenantId
+    ) {
+        MerchantWithdrawal withdrawal =
+                withdrawalRepository.findByIdAndTenant_Id(
+                                withdrawalId,
+                                tenantId
+                        )
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Merchant withdrawal not found"
+                        ));
+
+        return MerchantWithdrawalResponse.from(withdrawal);
+    }
+
+    private void validatePayoutAccount(
             MerchantPayoutAccount payoutAccount
     ) {
         if (payoutAccount.getStatus() != PayoutAccountStatus.VERIFIED) {
             throw new BadRequestException("Payout account is not verified");
         }
 
-        if (payoutAccount.getDestinationType() != PayoutDestinationType.BANK_ACCOUNT) {
-            throw new BadRequestException("Payout account is not a bank account");
+        if (payoutAccount.getDestinationType() == PayoutDestinationType.BANK_ACCOUNT) {
+            validateBankPayoutAccount(payoutAccount);
+            return;
         }
 
+        if (payoutAccount.getDestinationType() == PayoutDestinationType.NOMBA_WALLET) {
+            validateNombaWalletPayoutAccount(payoutAccount);
+            return;
+        }
+
+        throw new BadRequestException("Unsupported payout account destination type");
+    }
+
+    private void validateBankPayoutAccount(
+            MerchantPayoutAccount payoutAccount
+    ) {
         if (!hasText(payoutAccount.getBankCode())
                 || !hasText(payoutAccount.getAccountNumber())
                 || !hasText(payoutAccount.getAccountName())) {
-            throw new BadRequestException("Payout account is incomplete");
+            throw new BadRequestException("Bank payout account is incomplete");
         }
+    }
+
+    private void validateNombaWalletPayoutAccount(
+            MerchantPayoutAccount payoutAccount
+    ) {
+        if (!hasText(payoutAccount.getReceiverAccountId())) {
+            throw new BadRequestException("Nomba wallet payout account is incomplete");
+        }
+    }
+
+    private Tenant getCurrentTenant() {
+        UUID tenantId = authenticatedTenantProvider.getCurrentTenantId();
+
+        return tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tenant not found"));
     }
 
     private void validateTenantIsActive(Tenant tenant) {
@@ -602,12 +651,6 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             throw new BadRequestException(
                     "Idempotency-Key must be between 8 and 120 characters"
             );
-        }
-    }
-
-    private void validateReceiverAccountId(String receiverAccountId) {
-        if (!hasText(receiverAccountId)) {
-            throw new BadRequestException("Receiver account ID is required");
         }
     }
 
@@ -658,17 +701,6 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         }
 
         return "Merchant withdrawal";
-    }
-
-    private Instant nextAttemptAt(MerchantWithdrawal withdrawal) {
-        int attempt = Math.max(withdrawal.getAttemptCount(), 1);
-
-        long delaySeconds = Math.min(
-                1_800L,
-                120L * attempt
-        );
-
-        return Instant.now().plusSeconds(delaySeconds);
     }
 
     private boolean isTerminalFailureStatus(String providerStatus) {
