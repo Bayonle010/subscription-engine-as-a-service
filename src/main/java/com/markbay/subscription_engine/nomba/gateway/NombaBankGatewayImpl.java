@@ -82,6 +82,7 @@ public class NombaBankGatewayImpl implements NombaBankGateway {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(new NombaBankAccountLookupRequest(accountNumber, bankCode))
                 .retrieve()
+                .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                 .body(JsonNode.class);
 
         String rawResponse = toRawJson(response);
