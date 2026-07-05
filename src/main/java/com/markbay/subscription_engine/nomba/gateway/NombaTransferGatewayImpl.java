@@ -5,11 +5,13 @@ import com.markbay.subscription_engine.nomba.dto.request.NombaWalletTransferRequ
 import com.markbay.subscription_engine.nomba.dto.response.NombaTransferResult;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransferGateway;
 import com.markbay.subscription_engine.nomba.service.NombaAuthService;
+import com.markbay.subscription_engine.nomba.support.NombaRestClientErrorHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
@@ -40,11 +42,10 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
 
     private final NombaAuthService nombaAuthService;
 
+    private final NombaRestClientErrorHandler nombaErrorHandler;
+
     @Qualifier("nombaParentRestClient")
     private final RestClient nombaParentRestClient;
-
-    @Value("${payment.nomba.account-id}")
-    private String nombaParentAccountId;
 
     @Value("${payment.nomba.subaccount-id}")
     private String nombaSubAccountId;
@@ -68,7 +69,9 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(request)
                 .retrieve()
+                .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                 .body(JsonNode.class);
+
 
         NombaTransferResult result =
                 parseTransferResponse(
