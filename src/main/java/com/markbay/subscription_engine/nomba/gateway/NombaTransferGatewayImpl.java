@@ -4,10 +4,12 @@ import com.markbay.subscription_engine.nomba.dto.request.NombaBankTransferReques
 import com.markbay.subscription_engine.nomba.dto.request.NombaWalletTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTransferResult;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransferGateway;
+import com.markbay.subscription_engine.nomba.service.NombaAuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
@@ -36,6 +38,8 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
 
     private final ObjectMapper objectMapper;
 
+    private final NombaAuthService nombaAuthService;
+
     @Qualifier("nombaParentRestClient")
     private final RestClient nombaParentRestClient;
 
@@ -61,7 +65,7 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
         JsonNode response = nombaParentRestClient
                 .post()
                 .uri("/v2/transfers/bank/{subAccountId}", nombaSubAccountId)
-                .header("accountId", nombaParentAccountId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(request)
                 .retrieve()
                 .body(JsonNode.class);
@@ -99,7 +103,7 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
         JsonNode response = nombaParentRestClient
                 .post()
                 .uri("/v2/transfers/wallet")
-                .header("accountId", nombaParentAccountId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(request)
                 .retrieve()
                 .body(JsonNode.class);
