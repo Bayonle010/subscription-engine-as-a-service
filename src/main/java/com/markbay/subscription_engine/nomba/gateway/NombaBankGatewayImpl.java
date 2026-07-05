@@ -4,9 +4,13 @@ import com.markbay.subscription_engine.common.exception.BadRequestException;
 import com.markbay.subscription_engine.nomba.dto.request.NombaBankAccountLookupRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaBankAccountLookupResult;
 import com.markbay.subscription_engine.nomba.dto.response.NombaBankResult;
+import com.markbay.subscription_engine.nomba.service.NombaAuthService;
+import com.markbay.subscription_engine.nomba.support.NombaRestClientErrorHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
@@ -24,6 +28,10 @@ public class NombaBankGatewayImpl implements NombaBankGateway {
 
     private final ObjectMapper objectMapper;
 
+    private final NombaRestClientErrorHandler nombaErrorHandler;
+
+    private final NombaAuthService nombaAuthService;
+
     @Value("${payment.nomba.account-id}")
     private String nombaParentAccountId;
 
@@ -32,8 +40,9 @@ public class NombaBankGatewayImpl implements NombaBankGateway {
         JsonNode response = nombaParentRestClient
                 .get()
                 .uri("/v1/transfers/banks")
-                .header("accountId", nombaParentAccountId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .retrieve()
+                .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                 .body(JsonNode.class);
 
         JsonNode data = response == null ? null : response.path("data");
@@ -70,7 +79,7 @@ public class NombaBankGatewayImpl implements NombaBankGateway {
         JsonNode response = nombaParentRestClient
                 .post()
                 .uri("/v1/transfers/bank/lookup")
-                .header("accountId", nombaParentAccountId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(new NombaBankAccountLookupRequest(accountNumber, bankCode))
                 .retrieve()
                 .body(JsonNode.class);
