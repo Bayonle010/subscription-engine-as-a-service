@@ -1,18 +1,13 @@
 package com.markbay.subscription_engine.merchantwithdrawal.support;
 
 import com.markbay.subscription_engine.merchantwithdrawal.dto.NombaPayoutWebhookData;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 
 @Component
-@RequiredArgsConstructor
 public class NombaPayoutWebhookPayloadExtractor {
-
-    private final ObjectMapper objectMapper;
 
     public NombaPayoutWebhookData extract(
             String eventType,
@@ -20,25 +15,32 @@ public class NombaPayoutWebhookPayloadExtractor {
     ) {
         return new NombaPayoutWebhookData(
                 eventType,
-                findText(payload, "merchantTxRef"),
+                firstNonBlank(
+                        findText(payload, "merchantTxRef"),
+                        findText(payload, "merchant_tx_ref")
+                ),
                 firstNonBlank(
                         findText(payload, "transferId"),
+                        findText(payload, "transfer_id"),
                         findText(payload, "transactionId"),
+                        findText(payload, "transaction_id"),
                         findText(payload, "transactionRef"),
+                        findText(payload, "transaction_ref"),
                         findText(payload, "id")
                 ),
                 firstNonBlank(
                         findText(payload, "status"),
                         findText(payload, "transactionStatus"),
+                        findText(payload, "transaction_status"),
                         eventTypeToStatus(eventType)
                 ),
                 findDecimal(payload, "amount"),
-                toRawJson(payload)
+                payload == null ? "{}" : payload.toString()
         );
     }
 
     private String eventTypeToStatus(String eventType) {
-        if (eventType == null) {
+        if (eventType == null || eventType.trim().isEmpty()) {
             return null;
         }
 
@@ -57,26 +59,24 @@ public class NombaPayoutWebhookPayloadExtractor {
 
         JsonNode found = root.findValue(fieldName);
 
-        if (found == null || found.isMissingNode() || found.isNull()) {
+        if (found == null || found.isNull() || found.isMissingNode()) {
             return null;
         }
 
-        return found.asText();
+        String value = found.asText();
+
+        return hasText(value) ? value : null;
     }
 
     private BigDecimal findDecimal(JsonNode root, String fieldName) {
-        if (root == null || root.isNull()) {
-            return null;
-        }
+        String value = findText(root, fieldName);
 
-        JsonNode found = root.findValue(fieldName);
-
-        if (found == null || found.isMissingNode() || found.isNull()) {
+        if (!hasText(value)) {
             return null;
         }
 
         try {
-            return found.decimalValue();
+            return new BigDecimal(value.replace(",", ""));
         } catch (Exception exception) {
             return null;
         }
@@ -88,7 +88,7 @@ public class NombaPayoutWebhookPayloadExtractor {
         }
 
         for (String value : values) {
-            if (value != null && !value.trim().isEmpty()) {
+            if (hasText(value)) {
                 return value;
             }
         }
@@ -96,11 +96,7 @@ public class NombaPayoutWebhookPayloadExtractor {
         return null;
     }
 
-    private String toRawJson(JsonNode node) {
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (Exception exception) {
-            return "{}";
-        }
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }
