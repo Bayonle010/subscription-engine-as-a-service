@@ -3,6 +3,7 @@ package com.markbay.subscription_engine.nomba.gateway;
 import com.markbay.subscription_engine.nomba.dto.request.NombaBankTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.request.NombaWalletTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTransferResult;
+import com.markbay.subscription_engine.nomba.gateway.NombaTransferGateway;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -41,13 +42,17 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
     @Value("${payment.nomba.account-id}")
     private String nombaParentAccountId;
 
+    @Value("${payment.nomba.subaccount-id}")
+    private String nombaSubAccountId;
+
     @Override
     public NombaTransferResult transferToBank(
             NombaBankTransferRequest request
     ) {
         log.info(
-                "Initiating Nomba bank transfer. merchantTxRef={}, amount={}, bankCode={}, accountNumberMasked={}",
+                "Initiating Nomba sub-account bank transfer. merchantTxRef={}, subAccountId={}, amount={}, bankCode={}, accountNumberMasked={}",
                 request.merchantTxRef(),
+                nombaSubAccountId,
                 request.amount(),
                 request.bankCode(),
                 maskAccountNumber(request.accountNumber())
@@ -55,7 +60,7 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
 
         JsonNode response = nombaParentRestClient
                 .post()
-                .uri("/v2/transfers/bank")
+                .uri("/v2/transfers/bank/{subAccountId}", nombaSubAccountId)
                 .header("accountId", nombaParentAccountId)
                 .body(request)
                 .retrieve()
@@ -68,7 +73,7 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
                 );
 
         log.info(
-                "Nomba bank transfer response received. merchantTxRef={}, transferId={}, status={}, accepted={}, successful={}, pending={}",
+                "Nomba sub-account bank transfer response received. merchantTxRef={}, transferId={}, status={}, accepted={}, successful={}, pending={}",
                 result.merchantTxRef(),
                 result.transferId(),
                 result.status(),
@@ -140,6 +145,8 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
 
         String topLevelCode = text(response, "code");
         String topLevelStatus = text(response, "status");
+        String description = text(response, "description");
+        String message = text(response, "message");
 
         JsonNode data = response.path("data");
         JsonNode meta = data.path("meta");
@@ -147,15 +154,16 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
         String providerStatus = firstNonBlank(
                 text(data, "status"),
                 topLevelStatus,
-                text(response, "message"),
-                text(response, "description")
+                description,
+                message
         );
 
         String normalizedStatus = normalize(providerStatus);
 
         boolean successful =
                 SUCCESS_STATUSES.contains(normalizedStatus)
-                        || "00".equals(topLevelCode);
+                        || "00".equals(topLevelCode)
+                        && SUCCESS_STATUSES.contains(normalize(text(data, "status")));
 
         boolean pending =
                 PENDING_STATUSES.contains(normalizedStatus)

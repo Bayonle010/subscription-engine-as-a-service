@@ -12,6 +12,7 @@ import com.markbay.subscription_engine.merchantwithdrawal.enums.MerchantWithdraw
 import com.markbay.subscription_engine.merchantwithdrawal.enums.MerchantWithdrawalStatus;
 import com.markbay.subscription_engine.merchantwithdrawal.repository.MerchantWithdrawalRepository;
 import com.markbay.subscription_engine.merchantwithdrawal.service.MerchantWithdrawalService;
+import com.markbay.subscription_engine.merchantwithdrawal.service.MerchantWithdrawalVerificationService;
 import com.markbay.subscription_engine.nomba.dto.request.NombaBankTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.request.NombaWalletTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTransferResult;
@@ -66,6 +67,7 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
     private final LedgerPostingService ledgerPostingService;
     private final NombaTransferGateway nombaTransferGateway;
     private final PlatformTransactionManager transactionManager;
+    private final MerchantWithdrawalVerificationService withdrawalVerificationService;
 
     @Override
     public MerchantWithdrawalResponse requestWithdrawal(
@@ -297,12 +299,9 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             NombaTransferResult transferResult =
                     callNombaTransfer(withdrawal);
 
-            transactionTemplate.executeWithoutResult(status ->
-                    recordDispatchResult(
-                            withdrawalId,
-                            tenantId,
-                            transferResult
-                    )
+            withdrawalVerificationService.applyInitialTransferResult(
+                    withdrawalId,
+                    transferResult
             );
         } catch (Exception exception) {
             log.error(
@@ -406,73 +405,6 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         throw new BadRequestException("Unsupported withdrawal destination type");
     }
 
-    private void recordDispatchResult(
-            UUID withdrawalId,
-            UUID tenantId,
-            NombaTransferResult result
-    ) {
-        MerchantWithdrawal withdrawal =
-                withdrawalRepository.findByIdForUpdate(withdrawalId)
-                        .orElseThrow(() -> new ResourceNotFoundException(
-                                "Merchant withdrawal not found"
-                        ));
-
-        if (!withdrawal.getTenant().getId().equals(tenantId)) {
-            throw new ResourceNotFoundException("Merchant withdrawal not found");
-        }
-
-        if (withdrawal.getStatus() == MerchantWithdrawalStatus.SUCCEEDED
-                || withdrawal.getStatus() == MerchantWithdrawalStatus.REVERSED
-                || withdrawal.getStatus() == MerchantWithdrawalStatus.FAILED) {
-            return;
-        }
-
-        if (result == null) {
-            withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
-            withdrawal.setFailureReason("Nomba transfer response was empty");
-            withdrawal.setNextAttemptAt(null);
-            return;
-        }
-
-        if (hasText(result.transferId())) {
-            withdrawal.setProviderTransferId(result.transferId());
-        }
-
-        withdrawal.setProviderStatus(result.status());
-        withdrawal.setProviderRawResponse(result.rawResponse());
-
-        if (result.successful()) {
-            settleSuccessfulWithdrawal(withdrawal);
-            return;
-        }
-
-        if (result.pending() || result.accepted()) {
-            withdrawal.setStatus(MerchantWithdrawalStatus.PROCESSING);
-            withdrawal.setFailureReason(null);
-            withdrawal.setNextAttemptAt(null);
-
-            log.info(
-                    "Merchant withdrawal is processing at Nomba. withdrawalId={}, merchantTxRef={}, providerStatus={}",
-                    withdrawal.getId(),
-                    withdrawal.getMerchantTxRef(),
-                    result.status()
-            );
-
-            return;
-        }
-
-        if (isTerminalFailureStatus(result.status())) {
-            releaseFailedWithdrawalHold(
-                    withdrawal,
-                    "Nomba transfer failed with status: " + result.status()
-            );
-            return;
-        }
-
-        withdrawal.setStatus(MerchantWithdrawalStatus.MANUAL_REVIEW);
-        withdrawal.setFailureReason("Unexpected Nomba transfer response");
-        withdrawal.setNextAttemptAt(null);
-    }
 
     private void recordDispatchException(
             UUID withdrawalId,
@@ -509,66 +441,6 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         );
     }
 
-    private void settleSuccessfulWithdrawal(
-            MerchantWithdrawal withdrawal
-    ) {
-        LedgerPostingResult settlementResult =
-                ledgerPostingService.settleMerchantWithdrawal(
-                        withdrawal.getTenant(),
-                        withdrawal.getId(),
-                        withdrawal.getAmount(),
-                        withdrawal.getCurrency()
-                );
-
-        withdrawal.setSettlementLedgerTransactionRef(
-                settlementResult.transactionRef()
-        );
-
-        withdrawal.setStatus(MerchantWithdrawalStatus.SUCCEEDED);
-        withdrawal.setSucceededAt(Instant.now());
-        withdrawal.setNextAttemptAt(null);
-        withdrawal.setFailureReason(null);
-
-        log.info(
-                "Merchant withdrawal succeeded. tenantId={}, withdrawalId={}, merchantTxRef={}, amount={}, currency={}",
-                withdrawal.getTenant().getId(),
-                withdrawal.getId(),
-                withdrawal.getMerchantTxRef(),
-                withdrawal.getAmount(),
-                withdrawal.getCurrency()
-        );
-    }
-
-    private void releaseFailedWithdrawalHold(
-            MerchantWithdrawal withdrawal,
-            String reason
-    ) {
-        LedgerPostingResult reversalResult =
-                ledgerPostingService.releaseMerchantWithdrawalHold(
-                        withdrawal.getTenant(),
-                        withdrawal.getId(),
-                        withdrawal.getAmount(),
-                        withdrawal.getCurrency()
-                );
-
-        withdrawal.setReversalLedgerTransactionRef(
-                reversalResult.transactionRef()
-        );
-
-        withdrawal.setStatus(MerchantWithdrawalStatus.REVERSED);
-        withdrawal.setFailedAt(Instant.now());
-        withdrawal.setReversedAt(Instant.now());
-        withdrawal.setNextAttemptAt(null);
-        withdrawal.setFailureReason(reason);
-
-        log.warn(
-                "Merchant withdrawal failed and hold was released. tenantId={}, withdrawalId={}, merchantTxRef={}, reason={}",
-                withdrawal.getTenant().getId(),
-                withdrawal.getId(),
-                withdrawal.getMerchantTxRef(),
-                reason
-        );
-    }
 
     private MerchantWithdrawalResponse getWithdrawalForTenant(
             UUID withdrawalId,

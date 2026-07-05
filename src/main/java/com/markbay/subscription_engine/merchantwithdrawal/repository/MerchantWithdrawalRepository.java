@@ -10,8 +10,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,6 +24,8 @@ public interface MerchantWithdrawalRepository
 
     Optional<MerchantWithdrawal> findByMerchantTxRef(String merchantTxRef);
 
+    Optional<MerchantWithdrawal> findByProviderTransferId(String providerTransferId);
+
     List<MerchantWithdrawal> findAllByTenant_IdOrderByCreatedAtDesc(UUID tenantId);
 
     @EntityGraph(attributePaths = {"tenant", "payoutAccount"})
@@ -37,13 +37,11 @@ public interface MerchantWithdrawalRepository
     @Query("""
             SELECT withdrawal.id
             FROM MerchantWithdrawal withdrawal
-            WHERE withdrawal.status IN :statuses
-              AND (withdrawal.nextAttemptAt IS NULL OR withdrawal.nextAttemptAt <= :now)
-            ORDER BY withdrawal.createdAt ASC
+            WHERE withdrawal.status = :status
+            ORDER BY withdrawal.updatedAt ASC
             """)
-    List<UUID> findDueWithdrawalIds(
-            @Param("statuses") Collection<MerchantWithdrawalStatus> statuses,
-            @Param("now") Instant now,
+    List<UUID> findWithdrawalIdsByStatus(
+            @Param("status") MerchantWithdrawalStatus status,
             Pageable pageable
     );
 
