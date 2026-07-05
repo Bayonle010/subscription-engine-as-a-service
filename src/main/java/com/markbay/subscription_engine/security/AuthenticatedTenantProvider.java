@@ -1,5 +1,8 @@
 package com.markbay.subscription_engine.security;
 
+import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
+import com.markbay.subscription_engine.tenant.entity.Tenant;
+import com.markbay.subscription_engine.tenant.repository.TenantRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -10,6 +13,12 @@ import java.util.UUID;
 
 @Component
 public class AuthenticatedTenantProvider {
+
+    private final TenantRepository tenantRepository;
+
+    public AuthenticatedTenantProvider(TenantRepository tenantRepository) {
+        this.tenantRepository = tenantRepository;
+    }
 
     public UUID getCurrentTenantId() {
         Authentication authentication =
@@ -30,6 +39,12 @@ public class AuthenticatedTenantProvider {
         }
 
         throw new AccessDeniedException("Invalid authentication principal");
+    }
+
+    public Tenant getCurrentTenant(){
+        UUID tenantId = getCurrentTenantId();
+
+        return tenantRepository.findById(tenantId).orElseThrow(()-> new ResourceNotFoundException("Tenant not found"));
     }
 
     public Optional<UUID> getCurrentMerchantUserId() {

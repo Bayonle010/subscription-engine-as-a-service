@@ -3,6 +3,9 @@ package com.markbay.subscription_engine.webhook.service.impl;
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
 import com.markbay.subscription_engine.customerportal.repository.PaymentRescueCheckoutSessionRepository;
 import com.markbay.subscription_engine.customerportal.service.PaymentRescueCompletionService;
+import com.markbay.subscription_engine.merchantwithdrawal.dto.NombaPayoutWebhookData;
+import com.markbay.subscription_engine.merchantwithdrawal.service.MerchantWithdrawalVerificationService;
+import com.markbay.subscription_engine.merchantwithdrawal.support.NombaPayoutWebhookPayloadExtractor;
 import com.markbay.subscription_engine.nomba.dto.response.NombaVerifiedTransactionResult;
 import com.markbay.subscription_engine.nomba.dto.response.NombaWebhookPaymentData;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransactionGateway;
@@ -42,6 +45,8 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
     private final com.markbay.subscription_engine.renewalcheckout.repository.RenewalCheckoutSessionRepository renewalCheckoutSessionRepository;
     private final RenewalCheckoutCompletionService renewalCheckoutCompletionService;
     private final RenewalCheckoutService renewalCheckoutService;
+    private final MerchantWithdrawalVerificationService merchantWithdrawalVerificationService;
+    private final NombaPayoutWebhookPayloadExtractor payoutWebhookPayloadExtractor;
 
 
     @Override
@@ -82,6 +87,11 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
 
                 case PAYMENT_FAILED -> {
                     processPaymentFailed(event);
+                    markProcessed(event);
+                }
+
+                case PAYOUT_SUCCESS, PAYOUT_FAILED, PAYOUT_REFUND -> {
+                    processPayoutWebhook(event);
                     markProcessed(event);
                 }
 
@@ -171,11 +181,6 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
             return;
         }
 
-        log.warn(
-                "Payment success webhook ignored because order reference was not found. eventId={}, orderReference={}",
-                event.getId(),
-                orderReference
-        );
 
         var renewalCheckoutSession =
                 renewalCheckoutSessionRepository.findByOrderReference(orderReference);
@@ -192,6 +197,12 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
 
             return;
         }
+
+        log.warn(
+                "Payment success webhook ignored because order reference was not found. eventId={}, orderReference={}",
+                event.getId(),
+                orderReference
+        );
     }
 
     private void processPaymentFailed(InboundWebhookEvent event) {
@@ -276,6 +287,40 @@ public class NombaWebhookProcessorServiceImpl implements NombaWebhookProcessorSe
 
             return;
         }
+    }
+
+    private void processPayoutWebhook(InboundWebhookEvent event) {
+        JsonNode payload = payloadExtractor.readTree(event.getPayload());
+
+        NombaPayoutWebhookData payoutWebhookData =
+                payoutWebhookPayloadExtractor.extract(
+                        event.getEventType(),
+                        payload
+                );
+
+        if (!hasText(payoutWebhookData.merchantTxRef())
+                && !hasText(payoutWebhookData.transferId())) {
+            log.warn(
+                    "Payout webhook ignored because merchantTxRef and transferId are missing. eventId={}, eventType={}",
+                    event.getId(),
+                    event.getEventType()
+            );
+
+            return;
+        }
+
+        merchantWithdrawalVerificationService.handlePayoutWebhook(
+                payoutWebhookData
+        );
+
+        log.info(
+                "Payout webhook processed. eventId={}, eventType={}, merchantTxRef={}, transferId={}, providerStatus={}",
+                event.getId(),
+                event.getEventType(),
+                payoutWebhookData.merchantTxRef(),
+                payoutWebhookData.transferId(),
+                payoutWebhookData.providerStatus()
+        );
     }
 
     private boolean isAlreadyHandled(InboundWebhookEvent event) {

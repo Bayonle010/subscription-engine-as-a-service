@@ -14,6 +14,7 @@ import com.markbay.subscription_engine.ledger.repository.LedgerTransactionReposi
 import com.markbay.subscription_engine.ledger.service.LedgerPostingService;
 import com.markbay.subscription_engine.payment.entity.Payment;
 import com.markbay.subscription_engine.subscription.entity.Subscription;
+import com.markbay.subscription_engine.tenant.entity.Tenant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -222,6 +223,115 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
         );
     }
 
+    @Override
+    @Transactional
+    public LedgerPostingResult holdMerchantWithdrawal(
+            Tenant tenant,
+            UUID withdrawalId,
+            BigDecimal amount,
+            String currency
+    ) {
+        LedgerAccount merchantPayableAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.MERCHANT_PAYABLE,
+                currency
+        );
+
+        LedgerAccount payoutSettlementAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.PAYOUT_SETTLEMENT,
+                currency
+        );
+
+        if (merchantPayableAccount.getBalance().compareTo(amount) < 0) {
+            throw new BadRequestException("Insufficient merchant balance");
+        }
+
+        return postTwoSidedLedgerTransaction(
+                tenant,
+                "MERCHANT_WITHDRAWAL_HOLD:" + withdrawalId,
+                "MERCHANT_WITHDRAWAL_HOLD",
+                withdrawalId.toString(),
+                "Merchant withdrawal hold",
+                merchantPayableAccount,
+                LedgerEntryType.DEBIT,
+                payoutSettlementAccount,
+                LedgerEntryType.CREDIT,
+                amount,
+                currency
+        );
+    }
+
+    @Override
+    @Transactional
+    public LedgerPostingResult settleMerchantWithdrawal(
+            Tenant tenant,
+            UUID withdrawalId,
+            BigDecimal amount,
+            String currency
+    ) {
+        LedgerAccount payoutSettlementAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.PAYOUT_SETTLEMENT,
+                currency
+        );
+
+        LedgerAccount cashClearingAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.CASH_CLEARING,
+                currency
+        );
+
+        return postTwoSidedLedgerTransaction(
+                tenant,
+                "MERCHANT_WITHDRAWAL_SETTLEMENT:" + withdrawalId,
+                "MERCHANT_WITHDRAWAL_SETTLEMENT",
+                withdrawalId.toString(),
+                "Merchant withdrawal settled",
+                payoutSettlementAccount,
+                LedgerEntryType.DEBIT,
+                cashClearingAccount,
+                LedgerEntryType.CREDIT,
+                amount,
+                currency
+        );
+    }
+
+    @Override
+    @Transactional
+    public LedgerPostingResult releaseMerchantWithdrawalHold(
+            Tenant tenant,
+            UUID withdrawalId,
+            BigDecimal amount,
+            String currency
+    ) {
+        LedgerAccount payoutSettlementAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.PAYOUT_SETTLEMENT,
+                currency
+        );
+
+        LedgerAccount merchantPayableAccount = lockLedgerAccount(
+                tenant.getId(),
+                LedgerAccountType.MERCHANT_PAYABLE,
+                currency
+        );
+
+        return postTwoSidedLedgerTransaction(
+                tenant,
+                "MERCHANT_WITHDRAWAL_RELEASE:" + withdrawalId,
+                "MERCHANT_WITHDRAWAL_RELEASE",
+                withdrawalId.toString(),
+                "Merchant withdrawal hold released",
+                payoutSettlementAccount,
+                LedgerEntryType.DEBIT,
+                merchantPayableAccount,
+                LedgerEntryType.CREDIT,
+                amount,
+                currency
+        );
+    }
+
     private LedgerPostingResult postSubscriptionPayment(
             Subscription subscription,
             Payment payment,
@@ -403,6 +513,87 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
                     "Ledger transaction is not balanced"
             );
         }
+    }
+
+    private LedgerPostingResult postTwoSidedLedgerTransaction(
+            Tenant tenant,
+            String transactionRef,
+            String sourceType,
+            String sourceId,
+            String description,
+            LedgerAccount debitAccount,
+            LedgerEntryType debitType,
+            LedgerAccount creditAccount,
+            LedgerEntryType creditType,
+            BigDecimal amount,
+            String currency
+    ) {
+        var existingTransaction =
+                ledgerTransactionRepository.findByTransactionRef(transactionRef);
+
+        if (existingTransaction.isPresent()) {
+            return new LedgerPostingResult(
+                    existingTransaction.get().getId(),
+                    transactionRef,
+                    amount,
+                    BigDecimal.ZERO,
+                    amount,
+                    currency
+            );
+        }
+
+        LedgerTransaction ledgerTransaction = LedgerTransaction.builder()
+                .tenant(tenant)
+                .transactionRef(transactionRef)
+                .sourceType(sourceType)
+                .sourceId(sourceId)
+                .description(description)
+                .status(LedgerTransactionStatus.POSTED)
+                .build();
+
+        ledgerTransaction.addEntry(
+                LedgerEntry.builder()
+                        .ledgerAccount(debitAccount)
+                        .entryType(debitType)
+                        .amount(amount)
+                        .currency(currency)
+                        .build()
+        );
+
+        ledgerTransaction.addEntry(
+                LedgerEntry.builder()
+                        .ledgerAccount(creditAccount)
+                        .entryType(creditType)
+                        .amount(amount)
+                        .currency(currency)
+                        .build()
+        );
+
+        assertBalanced(ledgerTransaction);
+
+        applyEntryToBalance(
+                debitAccount,
+                debitType,
+                amount
+        );
+
+        applyEntryToBalance(
+                creditAccount,
+                creditType,
+                amount
+        );
+
+        LedgerTransaction savedTransaction =
+                ledgerTransactionRepository.save(ledgerTransaction);
+
+        return new LedgerPostingResult(
+                savedTransaction.getId(),
+                transactionRef,
+                amount,
+                BigDecimal.ZERO,
+                amount,
+                currency
+        );
     }
 
     private void applyEntryToBalance(
