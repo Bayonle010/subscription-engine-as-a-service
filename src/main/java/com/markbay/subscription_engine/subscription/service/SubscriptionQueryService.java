@@ -12,7 +12,8 @@ public interface SubscriptionQueryService {
 
     Page<SubscriptionResponse> getSubscriptions(
             SubscriptionStatus status,
-            Pageable pageable
+            Long page,
+            Long pageSize
     );
 
     SubscriptionResponse getSubscriptionById(UUID subscriptionId);
