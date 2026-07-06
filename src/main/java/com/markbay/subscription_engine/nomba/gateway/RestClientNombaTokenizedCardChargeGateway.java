@@ -19,15 +19,26 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.Set;
+
 @Slf4j
 @Component
 public class RestClientNombaTokenizedCardChargeGateway
         implements NombaTokenizedCardChargeGateway {
 
+    private static final Set<String> SUCCESS_STATUSES = Set.of(
+            "SUCCESS",
+            "SUCCESSFUL",
+            "COMPLETED",
+            "PAYMENT_SUCCESS",
+            "PAID"
+    );
+
     private final RestClient nombaSubAccountRestClient;
     private final NombaAuthService nombaAuthService;
     private final NombaRestClientErrorHandler nombaErrorHandler;
     private final ObjectMapper objectMapper;
+
     @Value("${payment.nomba.subaccount-id}")
     private String nombaSubAccountId;
 
@@ -47,10 +58,12 @@ public class RestClientNombaTokenizedCardChargeGateway
     public NombaTokenizedCardChargeResult chargeTokenizedCard(
             NombaTokenizedCardChargeRequest request
     ) {
+        String fallbackOrderReference = resolveRequestOrderReference(request);
+
         try {
             log.info(
                     "Charging Nomba tokenized card. orderReference={}",
-                    request.order() != null ? request.order().orderReference() : null
+                    fallbackOrderReference
             );
 
             NombaTokenizedCardChargeRequest requestWithSubAccount =
@@ -65,13 +78,20 @@ public class RestClientNombaTokenizedCardChargeGateway
                     .body(new ParameterizedTypeReference<NombaApiResponse<JsonNode>>() {});
 
             NombaTokenizedCardChargeResult result =
-                    parseResponse(response, request);
+                    parseResponse(
+                            response,
+                            request
+                    );
 
             log.info(
-                    "Nomba tokenized card charge completed. orderReference={}, success={}, status={}",
+                    "Nomba tokenized card charge completed. orderReference={}, accepted={}, success={}, requiresCustomerAction={}, status={}, message={}, rawResponse={}",
                     result.orderReference(),
+                    result.accepted(),
                     result.success(),
-                    result.status()
+                    result.requiresCustomerAction(),
+                    result.status(),
+                    result.message(),
+                    sanitizeAndTrimForLog(result.rawResponse())
             );
 
             return result;
@@ -82,7 +102,7 @@ public class RestClientNombaTokenizedCardChargeGateway
         } catch (ResourceAccessException exception) {
             log.error(
                     "Nomba tokenized card charge network error. orderReference={}, message={}",
-                    request.order() != null ? request.order().orderReference() : null,
+                    fallbackOrderReference,
                     exception.getMessage()
             );
 
@@ -91,7 +111,7 @@ public class RestClientNombaTokenizedCardChargeGateway
         } catch (Exception exception) {
             log.error(
                     "Nomba tokenized card charge unexpected error. orderReference={}",
-                    request.order() != null ? request.order().orderReference() : null,
+                    fallbackOrderReference,
                     exception
             );
 
@@ -134,58 +154,126 @@ public class RestClientNombaTokenizedCardChargeGateway
 
         JsonNode data = response.data();
 
-        String status = data == null ? null : firstText(
+        String fallbackOrderReference = resolveRequestOrderReference(request);
+
+        String message = data == null
+                ? response.description()
+                : firstText(
+                data,
+                "message",
+                "description",
+                "transaction.message",
+                "payment.message"
+        );
+
+        if (!hasText(message)) {
+            message = response.description();
+        }
+
+        boolean requiresCustomerAction = requiresCustomerAction(message);
+
+        String providerStatus = data == null
+                ? null
+                : firstText(
                 data,
                 "status",
                 "transaction.status",
                 "payment.status"
         );
 
-        String message = data == null ? response.description() : firstText(
-                data,
-                "message",
-                "description",
-                "transaction.message"
+        String status = requiresCustomerAction
+                ? "REQUIRES_CUSTOMER_ACTION"
+                : firstNonBlank(
+                providerStatus,
+                response.description()
         );
 
-        String transactionReference = data == null ? null : firstText(
+        String orderId = data == null
+                ? null
+                : firstText(
+                data,
+                "orderId",
+                "onlineCheckoutOrderId",
+                "order.id",
+                "transaction.orderId"
+        );
+
+        String transactionReference = data == null
+                ? null
+                : firstText(
                 data,
                 "transactionRef",
                 "transactionReference",
                 "transactionId",
                 "paymentReference",
+                "paymentVendorReference",
+                "id",
                 "transaction.transactionId"
         );
 
-        String orderReference = data == null ? null : firstText(
+        String orderReference = data == null
+                ? null
+                : firstText(
                 data,
                 "orderReference",
+                "onlineCheckoutOrderReference",
                 "order.orderReference",
-                "merchantTxRef",
-                "transaction.merchantTxRef"
+                "transaction.orderReference"
         );
 
-        if (!hasText(orderReference) && request.order() != null) {
-            orderReference = request.order().orderReference();
+        if (!hasText(orderReference)) {
+            orderReference = fallbackOrderReference;
         }
 
-        boolean success =
+        boolean dataStatusIsTrue = "true".equalsIgnoreCase(providerStatus);
+
+        boolean accepted =
                 response.isSuccessful()
-                        && (
-                        "true".equalsIgnoreCase(status)
-                                || "SUCCESS".equalsIgnoreCase(status)
-                                || "success".equalsIgnoreCase(message)
-                                || data == null
-                );
+                        || dataStatusIsTrue
+                        || SUCCESS_STATUSES.contains(normalize(providerStatus));
+
+        boolean success =
+                accepted
+                        && !requiresCustomerAction
+                        && SUCCESS_STATUSES.contains(normalize(status));
 
         return new NombaTokenizedCardChargeResult(
                 success,
+                accepted,
+                requiresCustomerAction,
                 status,
                 message,
+                orderId,
                 orderReference,
                 transactionReference,
                 toJson(response)
         );
+    }
+
+    private boolean requiresCustomerAction(String message) {
+        if (!hasText(message)) {
+            return false;
+        }
+
+        String normalized = message.toLowerCase();
+
+        return normalized.contains("otp")
+                || normalized.contains("3ds")
+                || normalized.contains("3-d")
+                || normalized.contains("authenticate")
+                || normalized.contains("authentication")
+                || normalized.contains("enter the")
+                || normalized.contains("sent to");
+    }
+
+    private String resolveRequestOrderReference(
+            NombaTokenizedCardChargeRequest request
+    ) {
+        if (request == null || request.order() == null) {
+            return null;
+        }
+
+        return request.order().orderReference();
     }
 
     private String firstText(JsonNode root, String... paths) {
@@ -230,12 +318,55 @@ public class RestClientNombaTokenizedCardChargeGateway
         return current;
     }
 
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (String value : values) {
+            if (hasText(value)) {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private String normalize(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value.trim().toUpperCase();
+    }
+
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (Exception exception) {
             return null;
         }
+    }
+
+    private String sanitizeAndTrimForLog(String value) {
+        if (!hasText(value)) {
+            return value;
+        }
+
+        String sanitized = value
+                .replaceAll("(?i)(\"tokenKey\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"onlineCheckoutTokenKey\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"cardPan\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"onlineCheckoutCardPan\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"customerBillerId\"\\s*:\\s*\")[^\"]*(\")", "$1***$2");
+
+        int maxLength = 2000;
+
+        if (sanitized.length() <= maxLength) {
+            return sanitized;
+        }
+
+        return sanitized.substring(0, maxLength) + "...[truncated]";
     }
 
     private boolean hasText(String value) {

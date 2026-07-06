@@ -58,9 +58,18 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RenewalBillingServiceImpl implements RenewalBillingService {
 
+    private static final Set<String> VERIFIED_SUCCESS_STATUSES = Set.of(
+            "SUCCESS",
+            "SUCCESSFUL",
+            "COMPLETED",
+            "PAYMENT_SUCCESS",
+            "PAID"
+    );
+
     private static final Set<String> VERIFIED_FAILURE_STATUSES = Set.of(
             "FAILED",
             "FAILURE",
+            "PAYMENT_FAILED",
             "DECLINED",
             "CANCELLED",
             "CANCELED",
@@ -186,120 +195,246 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 billingReference
         );
 
-        NombaTokenizedCardChargeResult chargeResult = null;
-
-        try {
-            chargeResult = tokenizedCardChargeGateway.chargeTokenizedCard(
-                    buildNombaChargeRequest(
-                            subscription,
-                            paymentMethod,
-                            billingReference
-                    )
-            );
-
-            logNombaRenewalChargeResponse(
-                    subscription,
-                    billingReference,
-                    chargeResult
-            );
-
-            if (chargeResult == null) {
-                markRenewalPendingVerification(
-                        subscription,
-                        invoice,
-                        attempt,
-                        null,
-                        null,
-                        billingReference,
-                        "Nomba charge response was null"
+        NombaTokenizedCardChargeResult chargeResult =
+                tokenizedCardChargeGateway.chargeTokenizedCard(
+                        buildNombaChargeRequest(
+                                subscription,
+                                paymentMethod,
+                                billingReference
+                        )
                 );
 
-                return;
-            }
+        logNombaRenewalChargeResponse(
+                subscription,
+                billingReference,
+                chargeResult
+        );
 
-            if (!chargeResult.success()) {
-                handleFailedRenewal(
-                        subscription,
-                        invoice,
-                        attempt,
-                        chargeResult.status(),
-                        chargeResult.message(),
-                        chargeResult.rawResponse(),
-                        billingReference
-                );
-
-                return;
-            }
-
-            NombaVerifiedTransactionResult verifiedTransaction =
-                    verifyRenewalTransaction(
-                            subscription,
-                            billingReference
-                    );
-
-            if (isVerifiedSuccessfulRenewal(
-                    subscription,
-                    verifiedTransaction,
-                    billingReference
-            )) {
-                handleSuccessfulRenewal(
-                        subscription,
-                        invoice,
-                        attempt,
-                        chargeResult,
-                        verifiedTransaction,
-                        billingReference
-                );
-
-                return;
-            }
-
-            if (isVerifiedFailedRenewal(verifiedTransaction)) {
-                handleFailedRenewal(
-                        subscription,
-                        invoice,
-                        attempt,
-                        verifiedTransaction.status(),
-                        "Nomba verification returned failed payment status: "
-                                + verifiedTransaction.status(),
-                        verifiedTransaction.rawResponse(),
-                        billingReference
-                );
-
-                return;
-            }
-
+        if (chargeResult == null) {
             markRenewalPendingVerification(
                     subscription,
                     invoice,
                     attempt,
-                    chargeResult,
-                    verifiedTransaction,
+                    null,
+                    null,
                     billingReference,
-                    "Nomba charge returned success, but transaction verification did not confirm successful payment"
+                    "Nomba charge response was null"
             );
 
-        } catch (Exception exception) {
-            log.error(
-                    "Renewal charge or verification failed unexpectedly. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
-                    subscription.getTenant().getId(),
-                    subscription.getId(),
-                    invoice.getId(),
-                    attempt.getId(),
-                    billingReference,
-                    exception.getMessage(),
-                    exception
+            return;
+        }
+
+        if (!chargeResult.accepted()) {
+            handleFailedRenewal(
+                    subscription,
+                    invoice,
+                    attempt,
+                    chargeResult.status(),
+                    firstNonBlank(
+                            chargeResult.message(),
+                            "Nomba tokenized-card charge was not accepted"
+                    ),
+                    chargeResult.rawResponse(),
+                    billingReference
             );
 
-            markRenewalPendingVerificationAfterException(
+            return;
+        }
+
+        NombaVerifiedTransactionResult verifiedTransaction =
+                verifyRenewalTransaction(
+                        subscription,
+                        billingReference
+                );
+
+        if (isVerifiedSuccessfulRenewal(
+                subscription,
+                verifiedTransaction,
+                billingReference
+        )) {
+            handleSuccessfulRenewal(
                     subscription,
                     invoice,
                     attempt,
                     chargeResult,
-                    billingReference,
-                    exception
+                    verifiedTransaction,
+                    billingReference
             );
+
+            return;
         }
+
+        if (isVerifiedFailedRenewal(verifiedTransaction)) {
+            handleFailedRenewal(
+                    subscription,
+                    invoice,
+                    attempt,
+                    verifiedTransaction.status(),
+                    "Nomba verification returned failed payment status: "
+                            + verifiedTransaction.status(),
+                    verifiedTransaction.rawResponse(),
+                    billingReference
+            );
+
+            return;
+        }
+
+        String pendingReason = chargeResult.requiresCustomerAction()
+                ? "Nomba tokenized-card charge requires customer action, and verification has not confirmed successful payment"
+                : "Nomba charge was accepted, but transaction verification did not confirm successful payment";
+
+        markRenewalPendingVerification(
+                subscription,
+                invoice,
+                attempt,
+                chargeResult,
+                verifiedTransaction,
+                billingReference,
+                pendingReason
+        );
+    }
+
+    private void verifyProcessingRenewalAttempt(
+            Subscription subscription,
+            Invoice invoice,
+            PaymentAttempt attempt,
+            String billingReference
+    ) {
+        NombaVerifiedTransactionResult verifiedTransaction =
+                verifyRenewalTransaction(
+                        subscription,
+                        billingReference
+                );
+
+        if (isVerifiedSuccessfulRenewal(
+                subscription,
+                verifiedTransaction,
+                billingReference
+        )) {
+            handleSuccessfulRenewal(
+                    subscription,
+                    invoice,
+                    attempt,
+                    null,
+                    verifiedTransaction,
+                    billingReference
+            );
+
+            return;
+        }
+
+        if (isVerifiedFailedRenewal(verifiedTransaction)) {
+            handleFailedRenewal(
+                    subscription,
+                    invoice,
+                    attempt,
+                    verifiedTransaction.status(),
+                    "Existing renewal attempt verification returned failed payment status: "
+                            + verifiedTransaction.status(),
+                    verifiedTransaction.rawResponse(),
+                    billingReference
+            );
+
+            return;
+        }
+
+        markRenewalPendingVerification(
+                subscription,
+                invoice,
+                attempt,
+                null,
+                verifiedTransaction,
+                billingReference,
+                "Existing renewal attempt is still not verified"
+        );
+    }
+
+    private NombaVerifiedTransactionResult verifyRenewalTransaction(
+            Subscription subscription,
+            String billingReference
+    ) {
+        NombaVerifiedTransactionResult verifiedTransaction =
+                nombaTransactionGateway.verifyByOrderReference(billingReference);
+
+        logNombaRenewalVerificationResponse(
+                subscription,
+                billingReference,
+                verifiedTransaction
+        );
+
+        return verifiedTransaction;
+    }
+
+    private boolean isVerifiedSuccessfulRenewal(
+            Subscription subscription,
+            NombaVerifiedTransactionResult verifiedTransaction,
+            String billingReference
+    ) {
+        if (verifiedTransaction == null) {
+            return false;
+        }
+
+        String normalizedStatus = normalize(verifiedTransaction.status());
+
+        if (!VERIFIED_SUCCESS_STATUSES.contains(normalizedStatus)) {
+            return false;
+        }
+
+        if (VERIFIED_FAILURE_STATUSES.contains(normalizedStatus)) {
+            return false;
+        }
+
+        if (hasText(verifiedTransaction.orderReference())
+                && !billingReference.equals(verifiedTransaction.orderReference())) {
+            log.warn(
+                    "Renewal verification order reference mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    billingReference,
+                    verifiedTransaction.orderReference()
+            );
+
+            return false;
+        }
+
+        if (verifiedTransaction.amount() != null
+                && verifiedTransaction.amount()
+                .setScale(4, RoundingMode.HALF_UP)
+                .compareTo(subscription.getAmount().setScale(4, RoundingMode.HALF_UP)) != 0) {
+            log.warn(
+                    "Renewal verification amount mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    subscription.getAmount(),
+                    verifiedTransaction.amount()
+            );
+
+            return false;
+        }
+
+        if (hasText(verifiedTransaction.currency())
+                && !subscription.getCurrency().equalsIgnoreCase(verifiedTransaction.currency())) {
+            log.warn(
+                    "Renewal verification currency mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    subscription.getCurrency(),
+                    verifiedTransaction.currency()
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean isVerifiedFailedRenewal(
+            NombaVerifiedTransactionResult verifiedTransaction
+    ) {
+        if (verifiedTransaction == null) {
+            return false;
+        }
+
+        return VERIFIED_FAILURE_STATUSES.contains(
+                normalize(verifiedTransaction.status())
+        );
     }
 
     private Invoice getOrCreateRenewalInvoice(
@@ -378,264 +513,6 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         );
 
         return savedAttempt;
-    }
-
-    private void verifyProcessingRenewalAttempt(
-            Subscription subscription,
-            Invoice invoice,
-            PaymentAttempt attempt,
-            String billingReference
-    ) {
-        try {
-            NombaVerifiedTransactionResult verifiedTransaction =
-                    verifyRenewalTransaction(
-                            subscription,
-                            billingReference
-                    );
-
-            if (isVerifiedSuccessfulRenewal(
-                    subscription,
-                    verifiedTransaction,
-                    billingReference
-            )) {
-                handleSuccessfulRenewal(
-                        subscription,
-                        invoice,
-                        attempt,
-                        null,
-                        verifiedTransaction,
-                        billingReference
-                );
-
-                return;
-            }
-
-            if (isVerifiedFailedRenewal(verifiedTransaction)) {
-                handleFailedRenewal(
-                        subscription,
-                        invoice,
-                        attempt,
-                        verifiedTransaction.status(),
-                        "Existing renewal attempt verification returned failed payment status: "
-                                + verifiedTransaction.status(),
-                        verifiedTransaction.rawResponse(),
-                        billingReference
-                );
-
-                return;
-            }
-
-            markRenewalPendingVerification(
-                    subscription,
-                    invoice,
-                    attempt,
-                    null,
-                    verifiedTransaction,
-                    billingReference,
-                    "Existing renewal attempt is still not verified"
-            );
-
-        } catch (Exception exception) {
-            log.error(
-                    "Existing processing renewal attempt verification failed. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
-                    subscription.getTenant().getId(),
-                    subscription.getId(),
-                    invoice.getId(),
-                    attempt.getId(),
-                    billingReference,
-                    exception.getMessage(),
-                    exception
-            );
-
-            markRenewalPendingVerificationAfterException(
-                    subscription,
-                    invoice,
-                    attempt,
-                    null,
-                    billingReference,
-                    exception
-            );
-        }
-    }
-
-    private NombaVerifiedTransactionResult verifyRenewalTransaction(
-            Subscription subscription,
-            String billingReference
-    ) {
-        NombaVerifiedTransactionResult verifiedTransaction =
-                nombaTransactionGateway.verifyByOrderReference(billingReference);
-
-        logNombaRenewalVerificationResponse(
-                subscription,
-                billingReference,
-                verifiedTransaction
-        );
-
-        return verifiedTransaction;
-    }
-
-    private boolean isVerifiedSuccessfulRenewal(
-            Subscription subscription,
-            NombaVerifiedTransactionResult verifiedTransaction,
-            String billingReference
-    ) {
-        if (verifiedTransaction == null) {
-            return false;
-        }
-
-        if (!verifiedTransaction.success()) {
-            return false;
-        }
-
-        if (hasText(verifiedTransaction.orderReference())
-                && !billingReference.equals(verifiedTransaction.orderReference())) {
-            log.warn(
-                    "Renewal verification order reference mismatch. subscriptionId={}, expected={}, actual={}",
-                    subscription.getId(),
-                    billingReference,
-                    verifiedTransaction.orderReference()
-            );
-
-            return false;
-        }
-
-        if (verifiedTransaction.amount() != null
-                && verifiedTransaction.amount()
-                .setScale(4, RoundingMode.HALF_UP)
-                .compareTo(subscription.getAmount().setScale(4, RoundingMode.HALF_UP)) != 0) {
-            log.warn(
-                    "Renewal verification amount mismatch. subscriptionId={}, expected={}, actual={}",
-                    subscription.getId(),
-                    subscription.getAmount(),
-                    verifiedTransaction.amount()
-            );
-
-            return false;
-        }
-
-        if (hasText(verifiedTransaction.currency())
-                && !subscription.getCurrency().equalsIgnoreCase(verifiedTransaction.currency())) {
-            log.warn(
-                    "Renewal verification currency mismatch. subscriptionId={}, expected={}, actual={}",
-                    subscription.getId(),
-                    subscription.getCurrency(),
-                    verifiedTransaction.currency()
-            );
-
-            return false;
-        }
-
-        return true;
-    }
-
-    private boolean isVerifiedFailedRenewal(
-            NombaVerifiedTransactionResult verifiedTransaction
-    ) {
-        if (verifiedTransaction == null) {
-            return false;
-        }
-
-        String normalizedStatus = normalize(verifiedTransaction.status());
-
-        return VERIFIED_FAILURE_STATUSES.contains(normalizedStatus);
-    }
-
-    private void markRenewalPendingVerification(
-            Subscription subscription,
-            Invoice invoice,
-            PaymentAttempt attempt,
-            NombaTokenizedCardChargeResult chargeResult,
-            NombaVerifiedTransactionResult verifiedTransaction,
-            String billingReference,
-            String reason
-    ) {
-        attempt.setStatus(PaymentAttemptStatus.PROCESSING);
-
-        if (chargeResult != null) {
-            attempt.setProviderStatus(chargeResult.status());
-            attempt.setProviderTransactionReference(
-                    resolveProviderTransactionReference(
-                            null,
-                            chargeResult,
-                            billingReference
-                    )
-            );
-            attempt.setProviderRawResponse(chargeResult.rawResponse());
-        }
-
-        if (verifiedTransaction != null) {
-            attempt.setProviderStatus(
-                    firstNonBlank(
-                            verifiedTransaction.status(),
-                            attempt.getProviderStatus()
-                    )
-            );
-            attempt.setProviderTransactionReference(
-                    resolveProviderTransactionReference(
-                            verifiedTransaction,
-                            chargeResult,
-                            billingReference
-                    )
-            );
-            attempt.setProviderRawResponse(
-                    firstNonBlank(
-                            verifiedTransaction.rawResponse(),
-                            attempt.getProviderRawResponse()
-                    )
-            );
-        }
-
-        attempt.setFailureReason(reason);
-
-        invoice.setStatus(InvoiceStatus.OPEN);
-
-        log.warn(
-                "Renewal left pending verification. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
-                subscription.getTenant().getId(),
-                subscription.getId(),
-                invoice.getId(),
-                attempt.getId(),
-                billingReference,
-                reason
-        );
-    }
-
-    private void markRenewalPendingVerificationAfterException(
-            Subscription subscription,
-            Invoice invoice,
-            PaymentAttempt attempt,
-            NombaTokenizedCardChargeResult chargeResult,
-            String billingReference,
-            Exception exception
-    ) {
-        attempt.setStatus(PaymentAttemptStatus.PROCESSING);
-
-        if (chargeResult != null) {
-            attempt.setProviderStatus(chargeResult.status());
-            attempt.setProviderTransactionReference(
-                    resolveProviderTransactionReference(
-                            null,
-                            chargeResult,
-                            billingReference
-                    )
-            );
-            attempt.setProviderRawResponse(chargeResult.rawResponse());
-        }
-
-        attempt.setFailureReason(
-                "Renewal verification could not be completed: " + exception.getMessage()
-        );
-
-        invoice.setStatus(InvoiceStatus.OPEN);
-
-        log.warn(
-                "Renewal kept in PROCESSING because transaction could not be safely verified. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}",
-                subscription.getTenant().getId(),
-                subscription.getId(),
-                invoice.getId(),
-                attempt.getId(),
-                billingReference
-        );
     }
 
     private void handleSuccessfulRenewal(
@@ -792,6 +669,66 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         );
     }
 
+    private void markRenewalPendingVerification(
+            Subscription subscription,
+            Invoice invoice,
+            PaymentAttempt attempt,
+            NombaTokenizedCardChargeResult chargeResult,
+            NombaVerifiedTransactionResult verifiedTransaction,
+            String billingReference,
+            String reason
+    ) {
+        attempt.setStatus(PaymentAttemptStatus.PROCESSING);
+
+        if (chargeResult != null) {
+            attempt.setProviderStatus(chargeResult.status());
+            attempt.setProviderTransactionReference(
+                    resolveProviderTransactionReference(
+                            null,
+                            chargeResult,
+                            billingReference
+                    )
+            );
+            attempt.setProviderRawResponse(chargeResult.rawResponse());
+        }
+
+        if (verifiedTransaction != null) {
+            attempt.setProviderStatus(
+                    firstNonBlank(
+                            verifiedTransaction.status(),
+                            attempt.getProviderStatus()
+                    )
+            );
+            attempt.setProviderTransactionReference(
+                    resolveProviderTransactionReference(
+                            verifiedTransaction,
+                            chargeResult,
+                            billingReference
+                    )
+            );
+            attempt.setProviderRawResponse(
+                    firstNonBlank(
+                            verifiedTransaction.rawResponse(),
+                            attempt.getProviderRawResponse()
+                    )
+            );
+        }
+
+        attempt.setFailureReason(reason);
+
+        invoice.setStatus(InvoiceStatus.OPEN);
+
+        log.warn(
+                "Renewal left pending verification. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
+                subscription.getTenant().getId(),
+                subscription.getId(),
+                invoice.getId(),
+                attempt.getId(),
+                billingReference,
+                reason
+        );
+    }
+
     private void markRenewalFailedWithoutAttempt(
             Subscription subscription,
             String billingReference,
@@ -895,13 +832,10 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         payload.put("tenantId", subscription.getTenant().getId().toString());
         payload.put("customerId", subscription.getCustomer().getId().toString());
         payload.put("customerEmail", subscription.getCustomer().getEmail());
-        payload.put(
-                "customerName",
-                buildCustomerName(
-                        subscription.getCustomer().getFirstName(),
-                        subscription.getCustomer().getLastName()
-                )
-        );
+        payload.put("customerName", buildCustomerName(
+                subscription.getCustomer().getFirstName(),
+                subscription.getCustomer().getLastName()
+        ));
         payload.put("subscriptionId", subscription.getId().toString());
         payload.put("subscriptionStatus", subscription.getStatus().name());
         payload.put("planId", subscription.getPlan().getId().toString());
@@ -952,13 +886,10 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         payload.put("tenantId", subscription.getTenant().getId().toString());
         payload.put("customerId", subscription.getCustomer().getId().toString());
         payload.put("customerEmail", subscription.getCustomer().getEmail());
-        payload.put(
-                "customerName",
-                buildCustomerName(
-                        subscription.getCustomer().getFirstName(),
-                        subscription.getCustomer().getLastName()
-                )
-        );
+        payload.put("customerName", buildCustomerName(
+                subscription.getCustomer().getFirstName(),
+                subscription.getCustomer().getLastName()
+        ));
         payload.put("subscriptionId", subscription.getId().toString());
         payload.put("subscriptionStatus", subscription.getStatus().name());
         payload.put("planId", subscription.getPlan().getId().toString());
@@ -969,10 +900,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         payload.put("billingReference", billingReference);
         payload.put("amount", attempt.getAmount().toPlainString());
         payload.put("currency", attempt.getCurrency());
-        payload.put(
-                "reason",
-                reason == null ? "Renewal payment failed" : reason
-        );
+        payload.put("reason", reason == null ? "Renewal payment failed" : reason);
 
         eventOutboxService.recordEvent(
                 CreateEventOutboxCommand.builder()
@@ -1093,13 +1021,17 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         }
 
         log.info(
-                "Nomba renewal charge response. tenantId={}, subscriptionId={}, billingReference={}, success={}, status={}, message={}, transactionReference={}, rawResponse={}",
+                "Nomba renewal charge response. tenantId={}, subscriptionId={}, billingReference={}, accepted={}, success={}, requiresCustomerAction={}, status={}, message={}, orderId={}, orderReference={}, transactionReference={}, rawResponse={}",
                 subscription.getTenant().getId(),
                 subscription.getId(),
                 billingReference,
+                chargeResult.accepted(),
                 chargeResult.success(),
+                chargeResult.requiresCustomerAction(),
                 chargeResult.status(),
                 chargeResult.message(),
+                chargeResult.orderId(),
+                chargeResult.orderReference(),
                 chargeResult.transactionReference(),
                 trimForLog(chargeResult.rawResponse())
         );
@@ -1178,13 +1110,20 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
             return value;
         }
 
+        String sanitized = value
+                .replaceAll("(?i)(\"tokenKey\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"onlineCheckoutTokenKey\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"cardPan\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"onlineCheckoutCardPan\"\\s*:\\s*\")[^\"]*(\")", "$1***$2")
+                .replaceAll("(?i)(\"customerBillerId\"\\s*:\\s*\")[^\"]*(\")", "$1***$2");
+
         int maxLength = 2000;
 
-        if (value.length() <= maxLength) {
-            return value;
+        if (sanitized.length() <= maxLength) {
+            return sanitized;
         }
 
-        return value.substring(0, maxLength) + "...[truncated]";
+        return sanitized.substring(0, maxLength) + "...[truncated]";
     }
 
     private String safe(String value) {
