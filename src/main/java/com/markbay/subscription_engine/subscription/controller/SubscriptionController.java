@@ -1,5 +1,6 @@
 package com.markbay.subscription_engine.subscription.controller;
 
+import com.markbay.subscription_engine.common.pagination.PaginationAdapters;
 import com.markbay.subscription_engine.common.response.ApiResponse;
 import com.markbay.subscription_engine.common.response.ResponseUtil;
 import com.markbay.subscription_engine.subscription.dto.response.SubscriptionAnalyticsResponse;
@@ -13,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -24,7 +26,7 @@ public class SubscriptionController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('OWNER','ADMIN','DEVELOPER','SUPPORT','API_CLIENT')")
-    public ResponseEntity<ApiResponse<Page<SubscriptionResponse>>> getSubscriptions(
+    public ResponseEntity<ApiResponse<List<SubscriptionResponse>>> getSubscriptions(
             @RequestParam(required = false) SubscriptionStatus status,
             @RequestParam(required = false) Long page,
             @RequestParam(required = false) Long pageSize
@@ -38,10 +40,12 @@ public class SubscriptionController {
 
         return ResponseEntity.ok(
                 ResponseUtil.success(
+                        00,
                         "Subscriptions fetched successfully",
-                        response
-                )
-        );
+                        null,
+                        response.getContent(),
+                        PaginationAdapters.toMeta(response)
+        ));
     }
 
     @GetMapping("/{subscriptionId}")
