@@ -15,7 +15,9 @@ import com.markbay.subscription_engine.ledger.service.LedgerPostingService;
 import com.markbay.subscription_engine.nomba.dto.request.NombaTokenizedCardChargeRequest;
 import com.markbay.subscription_engine.nomba.dto.request.NombaTokenizedCardOrder;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTokenizedCardChargeResult;
+import com.markbay.subscription_engine.nomba.dto.response.NombaVerifiedTransactionResult;
 import com.markbay.subscription_engine.nomba.gateway.NombaTokenizedCardChargeGateway;
+import com.markbay.subscription_engine.nomba.gateway.NombaTransactionGateway;
 import com.markbay.subscription_engine.payment.entity.Payment;
 import com.markbay.subscription_engine.payment.enums.PaymentProvider;
 import com.markbay.subscription_engine.payment.enums.PaymentStatus;
@@ -40,20 +42,33 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class RenewalBillingServiceImpl implements RenewalBillingService {
+
+    private static final Set<String> VERIFIED_FAILURE_STATUSES = Set.of(
+            "FAILED",
+            "FAILURE",
+            "DECLINED",
+            "CANCELLED",
+            "CANCELED",
+            "REJECTED",
+            "REFUND",
+            "REFUNDED",
+            "REVERSED"
+    );
 
     private final SubscriptionRepository subscriptionRepository;
     private final InvoiceRepository invoiceRepository;
@@ -63,6 +78,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     private final LedgerPostingService ledgerPostingService;
     private final EventOutboxService eventOutboxService;
     private final NombaTokenizedCardChargeGateway tokenizedCardChargeGateway;
+    private final NombaTransactionGateway nombaTransactionGateway;
     private final DunningService dunningService;
     private final RenewalCheckoutService renewalCheckoutService;
     private final PlanSwitchService planSwitchService;
@@ -87,7 +103,6 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 subscription.getId()
         );
 
-
         if (!isDueForRenewal(subscription)) {
             return;
         }
@@ -96,7 +111,6 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
             cancelAtPeriodEnd(subscription);
             return;
         }
-
 
         String billingReference = buildRenewalBillingReference(subscription);
 
@@ -113,6 +127,46 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
             return;
         }
 
+        Invoice invoice = getOrCreateRenewalInvoice(
+                subscription,
+                billingReference
+        );
+
+        var existingProcessingAttempt =
+                paymentAttemptRepository.findFirstByInvoice_IdAndStatusOrderByCreatedAtDesc(
+                        invoice.getId(),
+                        PaymentAttemptStatus.PROCESSING
+                );
+
+        if (existingProcessingAttempt.isPresent()) {
+            log.warn(
+                    "Renewal has an existing processing payment attempt. Verifying instead of charging again. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}",
+                    subscription.getTenant().getId(),
+                    subscription.getId(),
+                    invoice.getId(),
+                    existingProcessingAttempt.get().getId(),
+                    billingReference
+            );
+
+            verifyProcessingRenewalAttempt(
+                    subscription,
+                    invoice,
+                    existingProcessingAttempt.get(),
+                    billingReference
+            );
+
+            return;
+        }
+
+        if (subscription.isPaymentMethodUpdateRequested()) {
+            handleRenewalWithPaymentMethodUpdateRequest(
+                    subscription,
+                    invoice
+            );
+
+            return;
+        }
+
         CustomerPaymentMethod paymentMethod = subscription.getPaymentMethod();
 
         if (!isUsableCardPaymentMethod(paymentMethod)) {
@@ -121,13 +175,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                     billingReference,
                     "Subscription does not have an active reusable card payment method"
             );
-            return;
-        }
 
-        Invoice invoice = getOrCreateRenewalInvoice(subscription, billingReference);
-
-        if (subscription.isPaymentMethodUpdateRequested()) {
-            handleRenewalWithPaymentMethodUpdateRequest(subscription, invoice);
             return;
         }
 
@@ -138,47 +186,118 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 billingReference
         );
 
-        try {
-            NombaTokenizedCardChargeResult chargeResult =
-                    tokenizedCardChargeGateway.chargeTokenizedCard(
-                            buildNombaChargeRequest(
-                                    subscription,
-                                    paymentMethod,
-                                    billingReference
-                            )
-                    );
+        NombaTokenizedCardChargeResult chargeResult = null;
 
-            if (chargeResult.success()) {
-                handleSuccessfulRenewal(
+        try {
+            chargeResult = tokenizedCardChargeGateway.chargeTokenizedCard(
+                    buildNombaChargeRequest(
+                            subscription,
+                            paymentMethod,
+                            billingReference
+                    )
+            );
+
+            logNombaRenewalChargeResponse(
+                    subscription,
+                    billingReference,
+                    chargeResult
+            );
+
+            if (chargeResult == null) {
+                markRenewalPendingVerification(
                         subscription,
                         invoice,
                         attempt,
-                        chargeResult,
+                        null,
+                        null,
+                        billingReference,
+                        "Nomba charge response was null"
+                );
+
+                return;
+            }
+
+            if (!chargeResult.success()) {
+                handleFailedRenewal(
+                        subscription,
+                        invoice,
+                        attempt,
+                        chargeResult.status(),
+                        chargeResult.message(),
+                        chargeResult.rawResponse(),
                         billingReference
                 );
 
                 return;
             }
 
-            handleFailedRenewal(
+            NombaVerifiedTransactionResult verifiedTransaction =
+                    verifyRenewalTransaction(
+                            subscription,
+                            billingReference
+                    );
+
+            if (isVerifiedSuccessfulRenewal(
+                    subscription,
+                    verifiedTransaction,
+                    billingReference
+            )) {
+                handleSuccessfulRenewal(
+                        subscription,
+                        invoice,
+                        attempt,
+                        chargeResult,
+                        verifiedTransaction,
+                        billingReference
+                );
+
+                return;
+            }
+
+            if (isVerifiedFailedRenewal(verifiedTransaction)) {
+                handleFailedRenewal(
+                        subscription,
+                        invoice,
+                        attempt,
+                        verifiedTransaction.status(),
+                        "Nomba verification returned failed payment status: "
+                                + verifiedTransaction.status(),
+                        verifiedTransaction.rawResponse(),
+                        billingReference
+                );
+
+                return;
+            }
+
+            markRenewalPendingVerification(
                     subscription,
                     invoice,
                     attempt,
-                    chargeResult.status(),
-                    chargeResult.message(),
-                    chargeResult.rawResponse(),
-                    billingReference
+                    chargeResult,
+                    verifiedTransaction,
+                    billingReference,
+                    "Nomba charge returned success, but transaction verification did not confirm successful payment"
             );
 
         } catch (Exception exception) {
-            handleFailedRenewal(
+            log.error(
+                    "Renewal charge or verification failed unexpectedly. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
+                    subscription.getTenant().getId(),
+                    subscription.getId(),
+                    invoice.getId(),
+                    attempt.getId(),
+                    billingReference,
+                    exception.getMessage(),
+                    exception
+            );
+
+            markRenewalPendingVerificationAfterException(
                     subscription,
                     invoice,
                     attempt,
-                    null,
-                    exception.getMessage(),
-                    null,
-                    billingReference
+                    chargeResult,
+                    billingReference,
+                    exception
             );
         }
     }
@@ -200,7 +319,7 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                             .status(InvoiceStatus.OPEN)
                             .billingReason(InvoiceBillingReason.RENEWAL)
                             .amountDue(subscription.getAmount())
-                            .amountPaid(java.math.BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP))
+                            .amountPaid(BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP))
                             .currency(subscription.getCurrency())
                             .periodStart(subscription.getCurrentPeriodEnd())
                             .periodEnd(calculateNextPeriodEnd(
@@ -261,11 +380,270 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         return savedAttempt;
     }
 
+    private void verifyProcessingRenewalAttempt(
+            Subscription subscription,
+            Invoice invoice,
+            PaymentAttempt attempt,
+            String billingReference
+    ) {
+        try {
+            NombaVerifiedTransactionResult verifiedTransaction =
+                    verifyRenewalTransaction(
+                            subscription,
+                            billingReference
+                    );
+
+            if (isVerifiedSuccessfulRenewal(
+                    subscription,
+                    verifiedTransaction,
+                    billingReference
+            )) {
+                handleSuccessfulRenewal(
+                        subscription,
+                        invoice,
+                        attempt,
+                        null,
+                        verifiedTransaction,
+                        billingReference
+                );
+
+                return;
+            }
+
+            if (isVerifiedFailedRenewal(verifiedTransaction)) {
+                handleFailedRenewal(
+                        subscription,
+                        invoice,
+                        attempt,
+                        verifiedTransaction.status(),
+                        "Existing renewal attempt verification returned failed payment status: "
+                                + verifiedTransaction.status(),
+                        verifiedTransaction.rawResponse(),
+                        billingReference
+                );
+
+                return;
+            }
+
+            markRenewalPendingVerification(
+                    subscription,
+                    invoice,
+                    attempt,
+                    null,
+                    verifiedTransaction,
+                    billingReference,
+                    "Existing renewal attempt is still not verified"
+            );
+
+        } catch (Exception exception) {
+            log.error(
+                    "Existing processing renewal attempt verification failed. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
+                    subscription.getTenant().getId(),
+                    subscription.getId(),
+                    invoice.getId(),
+                    attempt.getId(),
+                    billingReference,
+                    exception.getMessage(),
+                    exception
+            );
+
+            markRenewalPendingVerificationAfterException(
+                    subscription,
+                    invoice,
+                    attempt,
+                    null,
+                    billingReference,
+                    exception
+            );
+        }
+    }
+
+    private NombaVerifiedTransactionResult verifyRenewalTransaction(
+            Subscription subscription,
+            String billingReference
+    ) {
+        NombaVerifiedTransactionResult verifiedTransaction =
+                nombaTransactionGateway.verifyByOrderReference(billingReference);
+
+        logNombaRenewalVerificationResponse(
+                subscription,
+                billingReference,
+                verifiedTransaction
+        );
+
+        return verifiedTransaction;
+    }
+
+    private boolean isVerifiedSuccessfulRenewal(
+            Subscription subscription,
+            NombaVerifiedTransactionResult verifiedTransaction,
+            String billingReference
+    ) {
+        if (verifiedTransaction == null) {
+            return false;
+        }
+
+        if (!verifiedTransaction.success()) {
+            return false;
+        }
+
+        if (hasText(verifiedTransaction.orderReference())
+                && !billingReference.equals(verifiedTransaction.orderReference())) {
+            log.warn(
+                    "Renewal verification order reference mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    billingReference,
+                    verifiedTransaction.orderReference()
+            );
+
+            return false;
+        }
+
+        if (verifiedTransaction.amount() != null
+                && verifiedTransaction.amount()
+                .setScale(4, RoundingMode.HALF_UP)
+                .compareTo(subscription.getAmount().setScale(4, RoundingMode.HALF_UP)) != 0) {
+            log.warn(
+                    "Renewal verification amount mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    subscription.getAmount(),
+                    verifiedTransaction.amount()
+            );
+
+            return false;
+        }
+
+        if (hasText(verifiedTransaction.currency())
+                && !subscription.getCurrency().equalsIgnoreCase(verifiedTransaction.currency())) {
+            log.warn(
+                    "Renewal verification currency mismatch. subscriptionId={}, expected={}, actual={}",
+                    subscription.getId(),
+                    subscription.getCurrency(),
+                    verifiedTransaction.currency()
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean isVerifiedFailedRenewal(
+            NombaVerifiedTransactionResult verifiedTransaction
+    ) {
+        if (verifiedTransaction == null) {
+            return false;
+        }
+
+        String normalizedStatus = normalize(verifiedTransaction.status());
+
+        return VERIFIED_FAILURE_STATUSES.contains(normalizedStatus);
+    }
+
+    private void markRenewalPendingVerification(
+            Subscription subscription,
+            Invoice invoice,
+            PaymentAttempt attempt,
+            NombaTokenizedCardChargeResult chargeResult,
+            NombaVerifiedTransactionResult verifiedTransaction,
+            String billingReference,
+            String reason
+    ) {
+        attempt.setStatus(PaymentAttemptStatus.PROCESSING);
+
+        if (chargeResult != null) {
+            attempt.setProviderStatus(chargeResult.status());
+            attempt.setProviderTransactionReference(
+                    resolveProviderTransactionReference(
+                            null,
+                            chargeResult,
+                            billingReference
+                    )
+            );
+            attempt.setProviderRawResponse(chargeResult.rawResponse());
+        }
+
+        if (verifiedTransaction != null) {
+            attempt.setProviderStatus(
+                    firstNonBlank(
+                            verifiedTransaction.status(),
+                            attempt.getProviderStatus()
+                    )
+            );
+            attempt.setProviderTransactionReference(
+                    resolveProviderTransactionReference(
+                            verifiedTransaction,
+                            chargeResult,
+                            billingReference
+                    )
+            );
+            attempt.setProviderRawResponse(
+                    firstNonBlank(
+                            verifiedTransaction.rawResponse(),
+                            attempt.getProviderRawResponse()
+                    )
+            );
+        }
+
+        attempt.setFailureReason(reason);
+
+        invoice.setStatus(InvoiceStatus.OPEN);
+
+        log.warn(
+                "Renewal left pending verification. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}, reason={}",
+                subscription.getTenant().getId(),
+                subscription.getId(),
+                invoice.getId(),
+                attempt.getId(),
+                billingReference,
+                reason
+        );
+    }
+
+    private void markRenewalPendingVerificationAfterException(
+            Subscription subscription,
+            Invoice invoice,
+            PaymentAttempt attempt,
+            NombaTokenizedCardChargeResult chargeResult,
+            String billingReference,
+            Exception exception
+    ) {
+        attempt.setStatus(PaymentAttemptStatus.PROCESSING);
+
+        if (chargeResult != null) {
+            attempt.setProviderStatus(chargeResult.status());
+            attempt.setProviderTransactionReference(
+                    resolveProviderTransactionReference(
+                            null,
+                            chargeResult,
+                            billingReference
+                    )
+            );
+            attempt.setProviderRawResponse(chargeResult.rawResponse());
+        }
+
+        attempt.setFailureReason(
+                "Renewal verification could not be completed: " + exception.getMessage()
+        );
+
+        invoice.setStatus(InvoiceStatus.OPEN);
+
+        log.warn(
+                "Renewal kept in PROCESSING because transaction could not be safely verified. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, billingReference={}",
+                subscription.getTenant().getId(),
+                subscription.getId(),
+                invoice.getId(),
+                attempt.getId(),
+                billingReference
+        );
+    }
+
     private void handleSuccessfulRenewal(
             Subscription subscription,
             Invoice invoice,
             PaymentAttempt attempt,
             NombaTokenizedCardChargeResult chargeResult,
+            NombaVerifiedTransactionResult verifiedTransaction,
             String billingReference
     ) {
         Instant paidAt = Instant.now();
@@ -275,13 +653,29 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 subscription.getCurrency()
         );
 
+        String providerTransactionReference =
+                resolveProviderTransactionReference(
+                        verifiedTransaction,
+                        chargeResult,
+                        billingReference
+                );
+
+        String providerStatus =
+                firstNonBlank(
+                        verifiedTransaction == null ? null : verifiedTransaction.status(),
+                        chargeResult == null ? null : chargeResult.status()
+                );
+
+        String providerRawResponse =
+                firstNonBlank(
+                        verifiedTransaction == null ? null : verifiedTransaction.rawResponse(),
+                        chargeResult == null ? null : chargeResult.rawResponse()
+                );
+
         attempt.setStatus(PaymentAttemptStatus.SUCCEEDED);
-        attempt.setProviderStatus(chargeResult.status());
-        attempt.setProviderTransactionReference(resolveProviderTransactionReference(
-                chargeResult,
-                billingReference
-        ));
-        attempt.setProviderRawResponse(chargeResult.rawResponse());
+        attempt.setProviderStatus(providerStatus);
+        attempt.setProviderTransactionReference(providerTransactionReference);
+        attempt.setProviderRawResponse(providerRawResponse);
         attempt.setSucceededAt(paidAt);
         attempt.setFailureReason(null);
 
@@ -303,12 +697,9 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 .netAmount(feeResult.merchantNetAmount())
                 .currency(feeResult.currency())
                 .orderReference(billingReference)
-                .providerTransactionReference(resolveProviderTransactionReference(
-                        chargeResult,
-                        billingReference
-                ))
-                .providerStatus(chargeResult.status())
-                .providerRawResponse(chargeResult.rawResponse())
+                .providerTransactionReference(providerTransactionReference)
+                .providerStatus(providerStatus)
+                .providerRawResponse(providerRawResponse)
                 .paidAt(paidAt)
                 .build();
 
@@ -340,11 +731,13 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         );
 
         log.info(
-                "Renewal payment succeeded. tenantId={}, subscriptionId={}, invoiceId={}, paymentId={}, oldPeriodEnd={}, newPeriodEnd={}",
+                "Renewal payment verified and succeeded. tenantId={}, subscriptionId={}, invoiceId={}, paymentId={}, billingReference={}, providerTransactionReference={}, oldPeriodEnd={}, newPeriodEnd={}",
                 subscription.getTenant().getId(),
                 subscription.getId(),
                 invoice.getId(),
                 savedPayment.getId(),
+                billingReference,
+                providerTransactionReference,
                 oldPeriodEnd,
                 newPeriodEnd
         );
@@ -371,7 +764,6 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
 
         subscription.setStatus(SubscriptionStatus.PAST_DUE);
 
-
         dunningService.openCaseForFailedRenewal(
                 subscription,
                 invoice,
@@ -380,13 +772,23 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
                 failureReason
         );
 
+        recordPaymentFailedEvent(
+                subscription,
+                invoice,
+                attempt,
+                billingReference,
+                failureReason
+        );
+
         log.warn(
-                "Renewal payment failed. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, reason={}",
+                "Renewal payment failed. tenantId={}, subscriptionId={}, invoiceId={}, attemptId={}, providerStatus={}, reason={}, rawResponse={}",
                 subscription.getTenant().getId(),
                 subscription.getId(),
                 invoice.getId(),
                 attempt.getId(),
-                failureReason
+                providerStatus,
+                failureReason,
+                trimForLog(rawResponse)
         );
     }
 
@@ -488,29 +890,32 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
             Payment payment,
             LedgerPostingResult ledgerPostingResult
     ) {
-        Map<String, String> payload = Map.ofEntries(
-                Map.entry("tenantId", subscription.getTenant().getId().toString()),
-                Map.entry("customerId", subscription.getCustomer().getId().toString()),
-                Map.entry("customerEmail", subscription.getCustomer().getEmail()),
-                Map.entry("customerName", buildCustomerName(
+        Map<String, String> payload = new LinkedHashMap<>();
+
+        payload.put("tenantId", subscription.getTenant().getId().toString());
+        payload.put("customerId", subscription.getCustomer().getId().toString());
+        payload.put("customerEmail", subscription.getCustomer().getEmail());
+        payload.put(
+                "customerName",
+                buildCustomerName(
                         subscription.getCustomer().getFirstName(),
                         subscription.getCustomer().getLastName()
-                )),
-                Map.entry("subscriptionId", subscription.getId().toString()),
-                Map.entry("subscriptionStatus", subscription.getStatus().name()),
-                Map.entry("planId", subscription.getPlan().getId().toString()),
-                Map.entry("planName", subscription.getPlan().getName()),
-                Map.entry("invoiceId", invoice.getId().toString()),
-                Map.entry("invoiceNumber", invoice.getInvoiceNumber()),
-                Map.entry("paymentId", payment.getId().toString()),
-                Map.entry("orderReference", payment.getOrderReference()),
-                Map.entry("providerTransactionReference", payment.getProviderTransactionReference()),
-                Map.entry("ledgerTransactionRef", ledgerPostingResult.transactionRef()),
-                Map.entry("amount", payment.getAmount().toPlainString()),
-                Map.entry("platformFee", payment.getPlatformFee().toPlainString()),
-                Map.entry("netAmount", payment.getNetAmount().toPlainString()),
-                Map.entry("currency", payment.getCurrency())
+                )
         );
+        payload.put("subscriptionId", subscription.getId().toString());
+        payload.put("subscriptionStatus", subscription.getStatus().name());
+        payload.put("planId", subscription.getPlan().getId().toString());
+        payload.put("planName", subscription.getPlan().getName());
+        payload.put("invoiceId", invoice.getId().toString());
+        payload.put("invoiceNumber", invoice.getInvoiceNumber());
+        payload.put("paymentId", payment.getId().toString());
+        payload.put("orderReference", payment.getOrderReference());
+        payload.put("providerTransactionReference", safe(payment.getProviderTransactionReference()));
+        payload.put("ledgerTransactionRef", ledgerPostingResult.transactionRef());
+        payload.put("amount", payment.getAmount().toPlainString());
+        payload.put("platformFee", payment.getPlatformFee().toPlainString());
+        payload.put("netAmount", payment.getNetAmount().toPlainString());
+        payload.put("currency", payment.getCurrency());
 
         eventOutboxService.recordEvent(
                 CreateEventOutboxCommand.builder()
@@ -654,14 +1059,81 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     }
 
     private String resolveProviderTransactionReference(
-            NombaTokenizedCardChargeResult result,
+            NombaVerifiedTransactionResult verifiedTransaction,
+            NombaTokenizedCardChargeResult chargeResult,
             String fallback
     ) {
-        if (result != null && hasText(result.transactionReference())) {
-            return result.transactionReference();
+        if (verifiedTransaction != null
+                && hasText(verifiedTransaction.transactionReference())) {
+            return verifiedTransaction.transactionReference();
+        }
+
+        if (chargeResult != null
+                && hasText(chargeResult.transactionReference())) {
+            return chargeResult.transactionReference();
         }
 
         return fallback;
+    }
+
+    private void logNombaRenewalChargeResponse(
+            Subscription subscription,
+            String billingReference,
+            NombaTokenizedCardChargeResult chargeResult
+    ) {
+        if (chargeResult == null) {
+            log.warn(
+                    "Nomba renewal charge response is null. tenantId={}, subscriptionId={}, billingReference={}",
+                    subscription.getTenant().getId(),
+                    subscription.getId(),
+                    billingReference
+            );
+
+            return;
+        }
+
+        log.info(
+                "Nomba renewal charge response. tenantId={}, subscriptionId={}, billingReference={}, success={}, status={}, message={}, transactionReference={}, rawResponse={}",
+                subscription.getTenant().getId(),
+                subscription.getId(),
+                billingReference,
+                chargeResult.success(),
+                chargeResult.status(),
+                chargeResult.message(),
+                chargeResult.transactionReference(),
+                trimForLog(chargeResult.rawResponse())
+        );
+    }
+
+    private void logNombaRenewalVerificationResponse(
+            Subscription subscription,
+            String billingReference,
+            NombaVerifiedTransactionResult verifiedTransaction
+    ) {
+        if (verifiedTransaction == null) {
+            log.warn(
+                    "Nomba renewal verification response is null. tenantId={}, subscriptionId={}, billingReference={}",
+                    subscription.getTenant().getId(),
+                    subscription.getId(),
+                    billingReference
+            );
+
+            return;
+        }
+
+        log.info(
+                "Nomba renewal verification response. tenantId={}, subscriptionId={}, billingReference={}, success={}, status={}, orderReference={}, transactionReference={}, amount={}, currency={}, rawResponse={}",
+                subscription.getTenant().getId(),
+                subscription.getId(),
+                billingReference,
+                verifiedTransaction.success(),
+                verifiedTransaction.status(),
+                verifiedTransaction.orderReference(),
+                verifiedTransaction.transactionReference(),
+                verifiedTransaction.amount(),
+                verifiedTransaction.currency(),
+                trimForLog(verifiedTransaction.rawResponse())
+        );
     }
 
     private String buildCustomerName(
@@ -679,6 +1151,42 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
         return fullName;
     }
 
+    private String normalize(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value.trim().toUpperCase();
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (String value : values) {
+            if (hasText(value)) {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private String trimForLog(String value) {
+        if (!hasText(value)) {
+            return value;
+        }
+
+        int maxLength = 2000;
+
+        if (value.length() <= maxLength) {
+            return value;
+        }
+
+        return value.substring(0, maxLength) + "...[truncated]";
+    }
+
     private String safe(String value) {
         return value == null ? "" : value.trim();
     }
@@ -686,4 +1194,4 @@ public class RenewalBillingServiceImpl implements RenewalBillingService {
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
     }
-}   
+}

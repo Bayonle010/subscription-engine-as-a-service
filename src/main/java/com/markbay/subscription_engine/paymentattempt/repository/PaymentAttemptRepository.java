@@ -1,6 +1,7 @@
 package com.markbay.subscription_engine.paymentattempt.repository;
 
 import com.markbay.subscription_engine.paymentattempt.entity.PaymentAttempt;
+import com.markbay.subscription_engine.paymentattempt.enums.PaymentAttemptStatus;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -19,4 +20,10 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
             "paymentMethod"
     })
     Optional<PaymentAttempt> findByAttemptReference(String attemptReference);
+
+
+    Optional<PaymentAttempt> findFirstByInvoice_IdAndStatusOrderByCreatedAtDesc(
+            UUID invoiceId,
+            PaymentAttemptStatus status
+    );
 }
