@@ -3,6 +3,7 @@ package com.markbay.subscription_engine.subscription.repository;
 import com.markbay.subscription_engine.subscription.entity.Subscription;
 import com.markbay.subscription_engine.subscription.enums.SubscriptionStatus;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -95,4 +96,33 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
     Optional<Subscription> findByIdForScheduledCancellationUpdate(
             @Param("subscriptionId") UUID subscriptionId
     );
+
+
+
+    @EntityGraph(attributePaths = {
+            "tenant",
+            "customer",
+            "plan",
+            "paymentMethod",
+            "checkoutSession"
+    })
+    Page<Subscription> findAllByTenant_Id(UUID tenantId, Pageable pageable);
+
+    @EntityGraph(attributePaths = {
+            "tenant",
+            "customer",
+            "plan",
+            "paymentMethod",
+            "checkoutSession"
+    })
+    Page<Subscription> findAllByTenant_IdAndStatus(
+            UUID tenantId,
+            SubscriptionStatus status,
+            Pageable pageable
+    );
+
+
+    long countByTenant_Id(UUID tenantId);
+
+    long countByTenant_IdAndStatus(UUID tenantId, SubscriptionStatus status);
 }
