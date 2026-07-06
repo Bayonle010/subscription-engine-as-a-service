@@ -26,10 +26,15 @@ public class SubscriptionController {
     @PreAuthorize("hasAnyRole('OWNER','ADMIN','DEVELOPER','SUPPORT','API_CLIENT')")
     public ResponseEntity<ApiResponse<Page<SubscriptionResponse>>> getSubscriptions(
             @RequestParam(required = false) SubscriptionStatus status,
-            Pageable pageable
+            @RequestParam(required = false) Long page,
+            @RequestParam(required = false) Long pageSize
     ) {
         Page<SubscriptionResponse> response =
-                subscriptionQueryService.getSubscriptions(status, pageable);
+                subscriptionQueryService.getSubscriptions(
+                        status,
+                        page,
+                        pageSize
+                );
 
         return ResponseEntity.ok(
                 ResponseUtil.success(

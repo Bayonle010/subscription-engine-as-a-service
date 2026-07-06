@@ -1,6 +1,7 @@
 package com.markbay.subscription_engine.subscription.service.impl;
 
 import com.markbay.subscription_engine.common.exception.ResourceNotFoundException;
+import com.markbay.subscription_engine.common.pagination.PaginationAdapters;
 import com.markbay.subscription_engine.security.AuthenticatedMerchantProvider;
 import com.markbay.subscription_engine.subscription.dto.response.SubscriptionAnalyticsResponse;
 import com.markbay.subscription_engine.subscription.dto.response.SubscriptionResponse;
@@ -27,12 +28,21 @@ public class SubscriptionQueryServiceImpl implements SubscriptionQueryService {
     @Override
     public Page<SubscriptionResponse> getSubscriptions(
             SubscriptionStatus status,
-            Pageable pageable
+            Long page,
+            Long pageSize
     ) {
         UUID tenantId = authenticatedMerchantProvider.getCurrentTenantId();
 
+        Pageable pageable = PaginationAdapters.createRecentFirstPageRequest(
+                page,
+                pageSize
+        );
+
         Page<Subscription> subscriptions = status == null
-                ? subscriptionRepository.findAllByTenant_Id(tenantId, pageable)
+                ? subscriptionRepository.findAllByTenant_Id(
+                tenantId,
+                pageable
+        )
                 : subscriptionRepository.findAllByTenant_IdAndStatus(
                 tenantId,
                 status,
