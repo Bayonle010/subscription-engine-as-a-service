@@ -62,7 +62,7 @@ zeptomail:
   base-url: https://api.zeptomail.com/v1.1
   token: ${ZEPTOMAIL_TOKEN}
   from:
-    address: noreply@subgrid.com
+    address: noreply@bayfiapp.com
     name: Subgrid
   reply-to: ${ZEPTOMAIL_REPLY_TO:}
   include-text: true
