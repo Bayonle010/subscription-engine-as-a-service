@@ -66,8 +66,16 @@ public class RestClientNombaTokenizedCardChargeGateway
                     fallbackOrderReference
             );
 
+
+
             NombaTokenizedCardChargeRequest requestWithSubAccount =
                     withSubAccountId(request);
+
+            log.info(
+                    "Sending request to Nomba tokenized-card-payment endpoint. orderReference={}, payload={}",
+                    fallbackOrderReference,
+                    sanitizeAndTrimForLog(requestWithSubAccount.toString())
+            );
 
             NombaApiResponse<JsonNode> response = nombaSubAccountRestClient.post()
                     .uri("/v1/checkout/tokenized-card-payment")
