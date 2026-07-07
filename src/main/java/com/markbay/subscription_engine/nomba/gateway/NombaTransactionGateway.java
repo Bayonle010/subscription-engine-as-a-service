@@ -7,7 +7,6 @@ import com.markbay.subscription_engine.nomba.service.NombaAuthService;
 import com.markbay.subscription_engine.nomba.support.NombaRestClientErrorHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.json.JsonParseException;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -18,10 +17,20 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.util.Set;
 
 @Slf4j
 @Component
 public class NombaTransactionGateway {
+
+    private static final Set<String> SUCCESS_STATUSES = Set.of(
+            "SUCCESS",
+            "SUCCESSFUL",
+            "COMPLETED",
+            "PAYMENT_SUCCESS",
+            "PAYMENT SUCCESSFUL",
+            "PAID"
+    );
 
     private final RestClient nombaRestClient;
     private final NombaAuthService nombaAuthService;
@@ -42,7 +51,10 @@ public class NombaTransactionGateway {
 
     public NombaVerifiedTransactionResult verifyByOrderReference(String orderReference) {
         try {
-            log.info("Verifying Nomba transaction. orderReference={}", orderReference);
+            log.info(
+                    "Verifying Nomba transaction. orderReference={}",
+                    orderReference
+            );
 
             NombaApiResponse<JsonNode> response = nombaRestClient.get()
                     .uri(uriBuilder -> uriBuilder
@@ -59,8 +71,9 @@ public class NombaTransactionGateway {
                     parseVerificationResponse(response, orderReference);
 
             log.info(
-                    "Nomba transaction verification completed. orderReference={}, status={}, success={}",
+                    "Nomba transaction verification completed. requestedOrderReference={}, verifiedOrderReference={}, status={}, success={}",
                     orderReference,
+                    result.orderReference(),
                     result.status(),
                     result.success()
             );
@@ -118,34 +131,44 @@ public class NombaTransactionGateway {
                 "statusCode"
         );
 
-        boolean success =
-                "SUCCESS".equalsIgnoreCase(status)
-                        || "PAYMENT SUCCESSFUL".equalsIgnoreCase(status)
-                        || data.path("success").asBoolean(false);
-
-        String orderReference = firstText(
+        /*
+         * Important:
+         * For online checkout/tokenized-card transactions, Nomba returns:
+         *
+         * onlineCheckoutOrderReference = our original orderReference
+         * merchantTxRef = Nomba/internal transaction reference
+         *
+         * So merchantTxRef must NOT be used as orderReference.
+         */
+        String verifiedOrderReference = firstText(
                 data,
+                "onlineCheckoutOrderReference",
                 "orderReference",
                 "order.orderReference",
-                "merchantTxRef",
-                "transaction.merchantTxRef"
+                "checkoutOrderReference",
+                "transaction.orderReference"
         );
 
-        if (!hasText(orderReference)) {
-            orderReference = fallbackOrderReference;
+        if (!hasText(verifiedOrderReference)) {
+            verifiedOrderReference = fallbackOrderReference;
         }
 
         String transactionReference = firstText(
                 data,
+                "id",
                 "transactionRef",
+                "transactionReference",
                 "transactionId",
                 "paymentReference",
+                "paymentVendorReference",
+                "merchantTxRef",
                 "transaction.transactionId",
                 "transactionDetails.paymentReference"
         );
 
         BigDecimal amount = firstDecimal(
                 data,
+                "onlineCheckoutAmount",
                 "amount",
                 "order.amount",
                 "transactionAmount",
@@ -154,15 +177,18 @@ public class NombaTransactionGateway {
 
         String currency = firstText(
                 data,
+                "onlineCheckoutCurrency",
                 "currency",
                 "order.currency",
                 "cardDetails.cardCurrency"
         );
 
+        boolean success = SUCCESS_STATUSES.contains(normalize(status));
+
         return new NombaVerifiedTransactionResult(
                 success,
                 status,
-                orderReference,
+                verifiedOrderReference,
                 transactionReference,
                 amount,
                 currency,
@@ -171,6 +197,10 @@ public class NombaTransactionGateway {
     }
 
     private String firstText(JsonNode root, String... paths) {
+        if (root == null || paths == null) {
+            return null;
+        }
+
         for (String path : paths) {
             JsonNode node = readPath(root, path);
 
@@ -187,12 +217,16 @@ public class NombaTransactionGateway {
     }
 
     private BigDecimal firstDecimal(JsonNode root, String... paths) {
+        if (root == null || paths == null) {
+            return null;
+        }
+
         for (String path : paths) {
             JsonNode node = readPath(root, path);
 
             if (node != null && !node.isNull() && node.isValueNode()) {
                 try {
-                    return new BigDecimal(node.asText());
+                    return new BigDecimal(node.asText().replace(",", ""));
                 } catch (NumberFormatException ignored) {
                     // try next path
                 }
@@ -203,6 +237,10 @@ public class NombaTransactionGateway {
     }
 
     private JsonNode readPath(JsonNode root, String path) {
+        if (root == null || !hasText(path)) {
+            return null;
+        }
+
         JsonNode current = root;
 
         for (String part : path.split("\\.")) {
@@ -223,9 +261,17 @@ public class NombaTransactionGateway {
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (JsonParseException exception) {
+        } catch (Exception exception) {
             return null;
         }
+    }
+
+    private String normalize(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value.trim().toUpperCase();
     }
 
     private boolean hasText(String value) {
