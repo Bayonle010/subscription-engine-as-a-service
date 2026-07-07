@@ -16,6 +16,7 @@ import com.markbay.subscription_engine.merchantwithdrawal.service.MerchantWithdr
 import com.markbay.subscription_engine.nomba.dto.request.NombaBankTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.request.NombaWalletTransferRequest;
 import com.markbay.subscription_engine.nomba.dto.response.NombaTransferResult;
+import com.markbay.subscription_engine.nomba.exception.NombaApiException;
 import com.markbay.subscription_engine.nomba.gateway.NombaTransferGateway;
 import com.markbay.subscription_engine.payoutaccount.entity.MerchantPayoutAccount;
 import com.markbay.subscription_engine.payoutaccount.enums.PayoutAccountStatus;
@@ -57,7 +58,10 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             "REJECTED",
             "REFUND",
             "REFUNDED",
-            "REVERSED"
+            "REVERSED",
+            "INSUFFICIENT_BALANCE",
+            "INSUFFICIENT_FUND",
+            "INSUFFICIENT_FUNDS"
     );
 
     private final AuthenticatedTenantProvider authenticatedTenantProvider;
@@ -427,10 +431,20 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
             return;
         }
 
+        if (isTerminalProviderFailure(exception)) {
+            failWithdrawalAndReleaseHold(
+                    withdrawal,
+                    resolveProviderStatus(exception),
+                    resolveRawProviderResponse(exception),
+                    "Nomba transfer failed: " + safeExceptionMessage(exception)
+            );
+            return;
+        }
+
         withdrawal.setStatus(MerchantWithdrawalStatus.PROCESSING);
         withdrawal.setFailureReason(
                 "Nomba transfer call failed or returned unknown result: "
-                        + exception.getMessage()
+                        + safeExceptionMessage(exception)
         );
         withdrawal.setNextAttemptAt(null);
 
@@ -441,6 +455,115 @@ public class MerchantWithdrawalServiceImpl implements MerchantWithdrawalService 
         );
     }
 
+    private void failWithdrawalAndReleaseHold(
+            MerchantWithdrawal withdrawal,
+            String providerStatus,
+            String rawProviderResponse,
+            String reason
+    ) {
+        if (!hasText(withdrawal.getReversalLedgerTransactionRef())) {
+            LedgerPostingResult reversalResult =
+                    ledgerPostingService.releaseMerchantWithdrawalHold(
+                            withdrawal.getTenant(),
+                            withdrawal.getId(),
+                            withdrawal.getAmount(),
+                            withdrawal.getCurrency()
+                    );
+
+            withdrawal.setReversalLedgerTransactionRef(
+                    reversalResult.transactionRef()
+            );
+        }
+
+        if (hasText(providerStatus)) {
+            withdrawal.setProviderStatus(providerStatus);
+        }
+
+        if (hasText(rawProviderResponse)) {
+            withdrawal.setProviderRawResponse(rawProviderResponse);
+        }
+
+        withdrawal.setStatus(MerchantWithdrawalStatus.FAILED);
+        withdrawal.setFailedAt(Instant.now());
+        withdrawal.setNextAttemptAt(null);
+        withdrawal.setFailureReason(reason);
+
+        log.warn(
+                "Merchant withdrawal failed and hold released. tenantId={}, withdrawalId={}, merchantTxRef={}, providerStatus={}, reason={}",
+                withdrawal.getTenant().getId(),
+                withdrawal.getId(),
+                withdrawal.getMerchantTxRef(),
+                providerStatus,
+                reason
+        );
+    }
+
+
+    private boolean isTerminalProviderFailure(Exception exception) {
+        String providerStatus = resolveProviderStatus(exception);
+
+        if (isTerminalFailureStatus(providerStatus)) {
+            return true;
+        }
+
+        String message = safeExceptionMessage(exception);
+
+        if (!hasText(message)) {
+            return false;
+        }
+
+        String normalizedMessage = message.toUpperCase();
+
+        return TERMINAL_FAILED_STATUSES
+                .stream()
+                .anyMatch(normalizedMessage::contains);
+    }
+
+    private String resolveProviderStatus(Exception exception) {
+        String rawResponse = resolveRawProviderResponse(exception);
+
+        if (containsIgnoreCase(rawResponse, "INSUFFICIENT_BALANCE")) {
+            return "INSUFFICIENT_BALANCE";
+        }
+
+        if (containsIgnoreCase(rawResponse, "INSUFFICIENT FUND")) {
+            return "INSUFFICIENT_FUND";
+        }
+
+        String message = safeExceptionMessage(exception);
+
+        if (containsIgnoreCase(message, "INSUFFICIENT_BALANCE")) {
+            return "INSUFFICIENT_BALANCE";
+        }
+
+        if (containsIgnoreCase(message, "INSUFFICIENT FUND")) {
+            return "INSUFFICIENT_FUND";
+        }
+
+        return null;
+    }
+
+    private String resolveRawProviderResponse(Exception exception) {
+        if (exception instanceof NombaApiException nombaApiException) {
+            return nombaApiException.getMessage();
+        }
+
+        return null;
+    }
+
+    private String safeExceptionMessage(Exception exception) {
+        if (exception == null || exception.getMessage() == null) {
+            return "Unknown error";
+        }
+
+        return exception.getMessage();
+    }
+
+    private boolean containsIgnoreCase(String value, String expected) {
+        return hasText(value)
+                && hasText(expected)
+                && value.toUpperCase().contains(expected.toUpperCase());
+    }
 
     private MerchantWithdrawalResponse getWithdrawalForTenant(
             UUID withdrawalId,

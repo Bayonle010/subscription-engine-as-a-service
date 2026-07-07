@@ -109,8 +109,8 @@ public class NombaTransferGatewayImpl implements NombaTransferGateway {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + nombaAuthService.getAccessToken())
                 .body(request)
                 .retrieve()
+                .onStatus(HttpStatusCode::isError, nombaErrorHandler::handle)
                 .body(JsonNode.class);
-
         NombaTransferResult result =
                 parseTransferResponse(
                         response,
