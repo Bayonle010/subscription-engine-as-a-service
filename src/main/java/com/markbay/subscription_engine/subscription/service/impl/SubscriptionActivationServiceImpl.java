@@ -57,7 +57,7 @@ public class SubscriptionActivationServiceImpl implements SubscriptionActivation
             NombaWebhookPaymentData paymentData
     ) {
         validateCheckoutCanBeActivated(checkoutSession, verifiedTransaction);
-        validateRecurringPaymentData(paymentData);
+       // validateRecurringPaymentData(paymentData);
 
         Customer customer = customerService.findOrCreateForCheckout(
                 checkoutSession.getTenant(),
