@@ -166,7 +166,7 @@ public class PaymentReconciliationServiceImpl
                         orderReference
                 );
 
-                return;
+//                return;
             }
 
             subscriptionActivationService.activateFromSuccessfulCheckout(
