@@ -156,18 +156,18 @@ public class PaymentReconciliationServiceImpl
                             verifiedTransaction
                     );
 
-//            if (!hasText(paymentData.tokenKey())) {
-//                checkoutSession.setStatus(CheckoutSessionStatus.REQUIRES_MANUAL_REVIEW);
-//                checkoutSession.setFailedAt(Instant.now());
-//
-//                log.warn(
-//                        "Subscription checkout payment succeeded but cannot activate recurring subscription because tokenKey is missing. checkoutSessionId={}, orderReference={}",
-//                        checkoutSession.getId(),
-//                        orderReference
-//                );
-//
-//                return;
-//            }
+            if (!hasText(paymentData.tokenKey())) {
+                checkoutSession.setStatus(CheckoutSessionStatus.REQUIRES_MANUAL_REVIEW);
+                checkoutSession.setFailedAt(Instant.now());
+
+                log.warn(
+                        "Subscription checkout payment succeeded but cannot activate recurring subscription because tokenKey is missing. checkoutSessionId={}, orderReference={}",
+                        checkoutSession.getId(),
+                        orderReference
+                );
+
+                return;
+            }
 
             subscriptionActivationService.activateFromSuccessfulCheckout(
                     checkoutSession,
