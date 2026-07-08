@@ -1,5 +1,16 @@
 # Subscription Engine as a Service
 
+# HOW TO TEST
+Visit https://nomba-hackathon-merchant-portal.vercel.app and register as a merchant or Use the below credentials to sign in.
+{ 
+    "email": "naubeuprinnitre-5834@yopmail.com",
+    "password": "Test123#" 
+}
+
+Consume api with base_url = https://subscription-engine-as-a-service.onrender.com
+Documentation link = https://documenter.getpostman.com/view/22203622/2sBXwyFmqu 
+
+
 A multi-tenant recurring billing engine built on top of Nomba payment primitives.  
 It provides subscription checkout, tokenized card billing, renewal processing, dunning, proration, customer self-service, reconciliation, merchant webhooks, payouts, and ledger-backed payment accounting.
 
