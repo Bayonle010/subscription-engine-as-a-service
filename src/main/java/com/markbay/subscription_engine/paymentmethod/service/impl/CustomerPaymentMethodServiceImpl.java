@@ -25,11 +25,11 @@ public class CustomerPaymentMethodServiceImpl implements CustomerPaymentMethodSe
             NombaWebhookPaymentData paymentData,
             String providerRawData
     ) {
-        if (paymentData == null || !hasText(paymentData.tokenKey())) {
-            throw new BadRequestException(
-                    "Nomba tokenized card token is missing"
-            );
-        }
+//        if (paymentData == null || !hasText(paymentData.tokenKey())) {
+//            throw new BadRequestException(
+//                    "Nomba tokenized card token is missing"
+//            );
+//        }
 
         return paymentMethodRepository.findByTenant_IdAndProviderTokenKey(
                         tenant.getId(),
